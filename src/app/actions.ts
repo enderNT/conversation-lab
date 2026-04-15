@@ -42,6 +42,10 @@ const chatTurnSchema = z.object({
   text: z.string().trim().min(1, "El mensaje no puede estar vacío"),
 });
 
+const sessionPromptSchema = z.object({
+  systemPrompt: z.string().default(""),
+});
+
 const caseSchema = z.object({
   title: z.string().trim().optional().default(""),
   sourceSummary: z.string().trim().default(""),
@@ -340,6 +344,7 @@ export async function sendSessionMessage(
     select: {
       id: true,
       projectId: true,
+      systemPrompt: true,
       messages: {
         orderBy: { orderIndex: "asc" },
         select: {
@@ -358,16 +363,19 @@ export async function sendSessionMessage(
   }
 
   try {
-    const assistantReply = await generateAssistantReply([
-      ...session.messages.map((message) => ({
-        role: message.role,
-        text: message.text,
-      })),
-      {
-        role: MessageRole.user,
-        text: parsed.text,
-      },
-    ]);
+    const assistantReply = await generateAssistantReply({
+      systemPrompt: session.systemPrompt,
+      messages: [
+        ...session.messages.map((message) => ({
+          role: message.role,
+          text: message.text,
+        })),
+        {
+          role: MessageRole.user,
+          text: parsed.text,
+        },
+      ],
+    });
 
     await prisma.$transaction(async (tx) => {
       const lastMessage = await tx.message.findFirst({
@@ -409,6 +417,58 @@ export async function sendSessionMessage(
       error instanceof Error
         ? error.message
         : "No fue posible obtener una respuesta del modelo.";
+
+    return {
+      ok: false as const,
+      error: message,
+    };
+  }
+
+  revalidatePath(`/projects/${projectId}/sessions/${sessionId}`);
+
+  return {
+    ok: true as const,
+  };
+}
+
+export async function updateSessionSystemPrompt(
+  projectId: string,
+  sessionId: string,
+  input: { systemPrompt: string },
+) {
+  const parsed = sessionPromptSchema.parse({
+    systemPrompt: input.systemPrompt,
+  });
+
+  const session = await prisma.session.findUnique({
+    where: { id: sessionId },
+    select: {
+      id: true,
+      projectId: true,
+    },
+  });
+
+  if (!session || session.projectId !== projectId) {
+    return {
+      ok: false as const,
+      error: "La sesión no existe o no pertenece al proyecto indicado.",
+    };
+  }
+
+  try {
+    const normalizedPrompt = parsed.systemPrompt.trim();
+
+    await prisma.session.update({
+      where: { id: sessionId },
+      data: {
+        systemPrompt: normalizedPrompt || null,
+      },
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : "No fue posible actualizar el prompt de comportamiento.";
 
     return {
       ok: false as const,

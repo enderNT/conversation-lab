@@ -67,6 +67,17 @@ OPENAI_MODEL=gpt-4.1-mini
 DATABASE_URL="file:./dev.db"
 ```
 
+Variables opcionales para proveedores OpenAI-compatible:
+
+```bash
+OPENAI_COMPATIBLE=false
+OPENAI_BASE_URL=
+```
+
+- Si `OPENAI_COMPATIBLE=false` o no existe, la app usa OpenAI con su URL por defecto.
+- Si `OPENAI_COMPATIBLE=true`, la app usa `OPENAI_BASE_URL` como `baseURL` del cliente OpenAI y mantiene `OPENAI_API_KEY` + `OPENAI_MODEL` para autenticación y selección del modelo.
+- El modelo sigue siendo libre: cualquier valor en `OPENAI_MODEL` se envía tal cual al backend OpenAI-compatible.
+
 3. Genera cliente Prisma y crea la base SQLite:
 
 ```bash
@@ -87,6 +98,12 @@ bun run dev
 
 La app queda disponible en `http://localhost:3000`.
 
+## Chat configurable
+
+- Cada sesión puede guardar un prompt de comportamiento opcional desde la propia pantalla de chat.
+- Si el prompt está vacío, la conversación se envía sin instrucción de sistema adicional.
+- Si el prompt tiene contenido, se aplica como prompt de sistema a los turnos siguientes de esa sesión.
+
 ## Docker
 
 Levanta la app con SQLite persistente en volumen:
@@ -95,7 +112,7 @@ Levanta la app con SQLite persistente en volumen:
 docker compose up --build
 ```
 
-Eso ejecuta `prisma db push` y arranca la app dentro del contenedor. El seed ya no se ejecuta automáticamente en despliegue. Para que el chat funcione en Docker, exporta `OPENAI_API_KEY` y opcionalmente `OPENAI_MODEL` antes de levantar Compose.
+Eso ejecuta `prisma db push` y arranca la app dentro del contenedor. El seed ya no se ejecuta automáticamente en despliegue. Para que el chat funcione en Docker, exporta `OPENAI_API_KEY`, opcionalmente `OPENAI_MODEL`, y si usas un backend OpenAI-compatible añade `OPENAI_COMPATIBLE=true` junto con `OPENAI_BASE_URL` antes de levantar Compose.
 
 Si quieres cargar datos demo manualmente en local o en un entorno efímero:
 
@@ -119,7 +136,7 @@ Esta app está preparada para desplegarse en Coolify sin publicar un puerto host
 3. Cuando Coolify detecte el servicio `conversation-lab`, abre la configuración de dominio de ese servicio.
 4. En el campo del dominio escribe tu dominio con el puerto interno del contenedor, por ejemplo: `https://lab.tudominio.com:3000`.
 5. Ese `:3000` no significa que el usuario final vaya a navegar a `:3000`; solo le dice a Coolify a qué puerto interno del contenedor debe enviar el tráfico del proxy.
-6. En variables de entorno de Coolify completa al menos `OPENAI_API_KEY`. `DATABASE_URL` puede quedar con su valor por defecto `file:/app/data/dev.db` y `OPENAI_MODEL` es opcional.
+6. En variables de entorno de Coolify completa al menos `OPENAI_API_KEY`. `DATABASE_URL` puede quedar con su valor por defecto `file:/app/data/dev.db` y `OPENAI_MODEL` es opcional. Si usas un proveedor OpenAI-compatible, añade también `OPENAI_COMPATIBLE=true` y `OPENAI_BASE_URL`.
 7. Despliega. Coolify publicará la app en el dominio normal (`https://lab.tudominio.com`) aunque internamente la app siga escuchando en `3000`.
 
 ### Cuándo usar `ports:`

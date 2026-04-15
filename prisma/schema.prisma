@@ -86,6 +86,7 @@ model Session {
   id        String    @id @default(cuid())
   projectId String
   title     String?
+  systemPrompt String?
   createdAt DateTime  @default(now())
   project   Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
   messages  Message[]

@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { SessionSelection } from "@/components/session-selection";
 import { StatusBadge } from "@/components/status-badge";
-import { getConfiguredOpenAIModel } from "@/lib/openai";
+import { getChatRuntimeConfiguration } from "@/lib/openai";
 import { prisma } from "@/lib/prisma";
 import { formatDate } from "@/lib/utils";
 
@@ -33,7 +33,7 @@ export default async function SessionChatPage({
     notFound();
   }
 
-  const chatEnabled = Boolean(process.env.OPENAI_API_KEY?.trim());
+  const chatRuntime = getChatRuntimeConfiguration();
 
   return (
     <div className="space-y-8">
@@ -60,9 +60,9 @@ export default async function SessionChatPage({
         </div>
       </section>
 
-      {!chatEnabled ? (
+      {!chatRuntime.enabled ? (
         <section className="rounded-[1.75rem] border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-900">
-          El chat real con LLM está deshabilitado. Define OPENAI_API_KEY y, opcionalmente, OPENAI_MODEL para conversar dentro de la sesión.
+          El chat real con LLM está deshabilitado. {chatRuntime.disabledReason}
         </section>
       ) : null}
 
@@ -70,8 +70,11 @@ export default async function SessionChatPage({
         <SessionSelection
           projectId={projectId}
           sessionId={sessionId}
-          chatEnabled={chatEnabled}
-          chatModel={getConfiguredOpenAIModel()}
+          chatEnabled={chatRuntime.enabled}
+          chatModel={chatRuntime.model}
+          chatProviderLabel={chatRuntime.providerLabel}
+          chatBaseUrl={chatRuntime.baseUrl}
+          systemPrompt={session.systemPrompt || ""}
           messages={session.messages.map((message) => ({
             id: message.id,
             role: message.role,

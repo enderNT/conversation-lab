@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState, startTransition } from "react";
 import { useRouter } from "next/navigation";
-import { sendSessionMessage } from "@/app/actions";
+import { sendSessionMessage, updateSessionSystemPrompt } from "@/app/actions";
 import { FormLabel } from "@/components/form-label";
 import { useToast } from "@/components/toast-provider";
 import { cn, formatDate } from "@/lib/utils";
@@ -22,6 +22,9 @@ type SessionSelectionProps = {
   messages: SelectableMessage[];
   chatModel: string;
   chatEnabled: boolean;
+  chatProviderLabel: string;
+  chatBaseUrl: string | null;
+  systemPrompt: string;
 };
 
 export function SessionSelection({
@@ -30,12 +33,17 @@ export function SessionSelection({
   messages,
   chatModel,
   chatEnabled,
+  chatProviderLabel,
+  chatBaseUrl,
+  systemPrompt,
 }: SessionSelectionProps) {
   const router = useRouter();
   const [anchorIndex, setAnchorIndex] = useState<number | null>(null);
   const [focusIndex, setFocusIndex] = useState<number | null>(null);
   const [draft, setDraft] = useState("");
+  const [systemPromptDraft, setSystemPromptDraft] = useState(systemPrompt);
   const [isSending, setIsSending] = useState(false);
+  const [isSavingPrompt, setIsSavingPrompt] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -71,6 +79,10 @@ export function SessionSelection({
 
     container.scrollTop = container.scrollHeight;
   }, [messages.length]);
+
+  useEffect(() => {
+    setSystemPromptDraft(systemPrompt);
+  }, [systemPrompt]);
 
   function handleSelect(orderIndex: number) {
     if (anchorIndex === null) {
@@ -132,6 +144,56 @@ export function SessionSelection({
     }
   }
 
+  async function handleSavePrompt() {
+    if (isSavingPrompt) {
+      return;
+    }
+
+    setIsSavingPrompt(true);
+
+    try {
+      const result = await updateSessionSystemPrompt(projectId, sessionId, {
+        systemPrompt: systemPromptDraft,
+      });
+
+      if (!result.ok) {
+        pushToast({
+          title: "No fue posible guardar el prompt",
+          description: result.error,
+          variant: "error",
+          durationMs: 7000,
+        });
+        return;
+      }
+
+      pushToast({
+        title: systemPromptDraft.trim()
+          ? "Prompt guardado"
+          : "Prompt eliminado",
+        description: systemPromptDraft.trim()
+          ? "La sesión usará este prompt de comportamiento en los siguientes turnos."
+          : "La sesión volvió a conversar sin prompt adicional.",
+        variant: "success",
+        durationMs: 7000,
+      });
+
+      startTransition(() => {
+        router.refresh();
+      });
+    } catch {
+      pushToast({
+        title: "No fue posible guardar el prompt",
+        description: "No fue posible actualizar el prompt de comportamiento.",
+        variant: "error",
+        durationMs: 7000,
+      });
+    } finally {
+      setIsSavingPrompt(false);
+    }
+  }
+
+  const promptIsDirty = systemPromptDraft.trim() !== systemPrompt.trim();
+
   return (
     <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
       <section className="space-y-6">
@@ -145,8 +207,39 @@ export function SessionSelection({
             </div>
 
             <div className="rounded-[1.25rem] border border-[var(--line)] bg-white/65 px-4 py-3 text-sm text-[var(--muted)]">
-              Modelo: {chatModel}
+              <p>Proveedor: {chatProviderLabel}</p>
+              <p className="mt-1">Modelo: {chatModel}</p>
+              <p className="mt-1 break-all">
+                Base URL: {chatBaseUrl || "https://api.openai.com/v1"}
+              </p>
             </div>
+          </div>
+
+          <label className="mt-5 block space-y-2">
+            <FormLabel>Behavior prompt (optional)</FormLabel>
+            <textarea
+              className="field min-h-28"
+              value={systemPromptDraft}
+              onChange={(event) => setSystemPromptDraft(event.target.value)}
+              placeholder="Déjalo vacío para conversar sin prompt adicional. Si lo completas, se aplicará como instrucción de sistema en los siguientes turnos."
+              disabled={isSavingPrompt}
+            />
+          </label>
+
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm text-[var(--muted)]">
+              El prompt es opcional y solo afecta las siguientes respuestas del modelo en esta sesión.
+            </p>
+            <button
+              type="button"
+              className="button-secondary"
+              onClick={() => {
+                void handleSavePrompt();
+              }}
+              disabled={isSavingPrompt || !promptIsDirty}
+            >
+              {isSavingPrompt ? "Saving prompt..." : "Save prompt"}
+            </button>
           </div>
 
           <label className="mt-5 block space-y-2">
@@ -172,7 +265,7 @@ export function SessionSelection({
             <p className="text-sm text-[var(--muted)]">
               {chatEnabled
                 ? "Enter envía. Shift+Enter agrega una nueva línea."
-                : "Configura OPENAI_API_KEY para habilitar el chat de la sesión."}
+                : "Completa la configuración del proveedor en variables de entorno para habilitar el chat."}
             </p>
             <button
               type="submit"

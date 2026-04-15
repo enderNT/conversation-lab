@@ -1,23 +1,45 @@
 import OpenAI from "openai";
 
 export const DEFAULT_OPENAI_MODEL = "gpt-4.1-mini";
+const TRUE_ENV_VALUES = new Set(["1", "true", "yes", "on"]);
 
 type ConversationMessage = {
   role: "user" | "assistant";
   text: string;
 };
 
-function getOpenAIClient() {
-  const apiKey = process.env.OPENAI_API_KEY?.trim();
+function readBooleanEnv(value: string | undefined) {
+  if (!value) {
+    return false;
+  }
 
-  if (!apiKey) {
-    throw new Error(
-      "OPENAI_API_KEY is not configured. Add it to your environment to enable session chat.",
-    );
+  return TRUE_ENV_VALUES.has(value.trim().toLowerCase());
+}
+
+export function isOpenAICompatibleModeEnabled() {
+  return readBooleanEnv(process.env.OPENAI_COMPATIBLE);
+}
+
+export function getConfiguredOpenAIBaseUrl() {
+  const baseUrl = process.env.OPENAI_BASE_URL?.trim();
+
+  if (!baseUrl) {
+    return null;
+  }
+
+  return baseUrl.replace(/\/+$/, "");
+}
+
+function getOpenAIClient() {
+  const configuration = getChatRuntimeConfiguration();
+
+  if (!configuration.enabled || !configuration.apiKey) {
+    throw new Error(configuration.disabledReason);
   }
 
   return new OpenAI({
-    apiKey,
+    apiKey: configuration.apiKey,
+    ...(configuration.baseUrl ? { baseURL: configuration.baseUrl } : {}),
   });
 }
 
@@ -25,17 +47,65 @@ export function getConfiguredOpenAIModel() {
   return process.env.OPENAI_MODEL?.trim() || DEFAULT_OPENAI_MODEL;
 }
 
-export async function generateAssistantReply(messages: ConversationMessage[]) {
+export function getChatRuntimeConfiguration() {
+  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  const compatibleMode = isOpenAICompatibleModeEnabled();
+  const baseUrl = compatibleMode ? getConfiguredOpenAIBaseUrl() : null;
+  const providerLabel = compatibleMode ? "OpenAI-compatible" : "OpenAI";
+  const disabledReason = !apiKey
+    ? compatibleMode
+      ? "Define OPENAI_API_KEY para autenticar el backend OpenAI-compatible."
+      : "Define OPENAI_API_KEY para habilitar el chat con OpenAI."
+    : compatibleMode && !baseUrl
+      ? "Define OPENAI_BASE_URL para usar un backend OpenAI-compatible."
+      : null;
+
+  return {
+    enabled: disabledReason === null,
+    disabledReason,
+    providerLabel,
+    compatibleMode,
+    apiKey: apiKey || null,
+    baseUrl,
+    model: getConfiguredOpenAIModel(),
+  };
+}
+
+export async function generateAssistantReply(input: {
+  messages: ConversationMessage[];
+  systemPrompt?: string | null;
+}) {
+  const requestMessages = input.systemPrompt?.trim()
+    ? [
+        {
+          role: "system" as const,
+          content: input.systemPrompt.trim(),
+        },
+        ...input.messages.map((message) => ({
+          role: message.role,
+          content: message.text,
+        })),
+      ]
+    : input.messages.map((message) => ({
+        role: message.role,
+        content: message.text,
+      }));
+
   const response = await getOpenAIClient().chat.completions.create({
     model: getConfiguredOpenAIModel(),
-    messages: messages.map((message) => ({
-      role: message.role,
-      content: message.text,
-    })),
+    messages: requestMessages,
   });
 
   const content = response.choices[0]?.message?.content;
-  const text = typeof content === "string" ? content.trim() : "";
+  const text =
+    typeof content === "string"
+      ? content.trim()
+      : Array.isArray(content)
+        ? content
+            .flatMap((part) => (part.type === "text" ? [part.text] : []))
+            .join("\n")
+            .trim()
+        : "";
 
   if (!text) {
     throw new Error("The configured model returned an empty response.");
