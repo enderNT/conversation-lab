@@ -95,7 +95,16 @@ Levanta la app con SQLite persistente en volumen:
 docker compose up --build
 ```
 
-Eso ejecuta `prisma db push`, aplica seed idempotente y arranca la app en `http://localhost:3000`. Para que el chat funcione en Docker, exporta `OPENAI_API_KEY` y opcionalmente `OPENAI_MODEL` antes de levantar Compose.
+Eso ejecuta `prisma db push`, aplica seed idempotente y arranca la app dentro del contenedor. Para que el chat funcione en Docker, exporta `OPENAI_API_KEY` y opcionalmente `OPENAI_MODEL` antes de levantar Compose.
+
+## Coolify
+
+Esta app está preparada para desplegarse en Coolify sin publicar un puerto host fijo.
+
+- El contenedor expone internamente el puerto `3000`.
+- El comando de arranque ya no fuerza `--port 3000`, así que Next puede usar la variable `PORT` si Coolify la inyecta.
+- Si despliegas con `docker-compose.yml` en Coolify, evita mapear `3000:3000`; Coolify debe enrutar al puerto interno del servicio.
+- Si Coolify te pide el puerto interno, usa `3000`.
 
 ## Export JSON
 
