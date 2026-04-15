@@ -1,10 +1,10 @@
 import Link from "next/link";
-import { updateCaseStatus } from "@/app/actions";
 import { parseInterpretation, parseTaskCandidates, suggestCompatibleTaskSpecs } from "@/lib/cases";
 import { prisma } from "@/lib/prisma";
 import { ensureDefaultTaskSpecs } from "@/lib/task-specs";
 import { CASE_STATUSES } from "@/lib/types";
 import { formatDate } from "@/lib/utils";
+import { CaseStatusForm } from "@/components/case-status-form";
 import { StatusBadge } from "@/components/status-badge";
 
 export const dynamic = "force-dynamic";
@@ -236,21 +236,7 @@ export default async function CasesPage({
                 </div>
 
                 <div className="w-full max-w-sm space-y-3">
-                  <form action={updateCaseStatus.bind(null, caseItem.id)} className="rounded-[1.5rem] border border-[var(--line)] bg-white/70 p-4">
-                    <label className="block space-y-2">
-                      <span className="text-sm font-medium">Quick status change</span>
-                      <select name="status" className="field" defaultValue={caseItem.status}>
-                        {CASE_STATUSES.map((status) => (
-                          <option key={status} value={status}>
-                            {status}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <button type="submit" className="button-secondary mt-3 w-full">
-                      Save status
-                    </button>
-                  </form>
+                  <CaseStatusForm caseId={caseItem.id} status={caseItem.status} />
 
                   <Link href={`/cases/${caseItem.id}`} className="button-primary inline-flex w-full justify-center">
                     Open V2 editor

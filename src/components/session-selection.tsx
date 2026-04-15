@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useEffect, useRef, useState, startTransition } from "react";
 import { useRouter } from "next/navigation";
 import { sendSessionMessage } from "@/app/actions";
+import { FormLabel } from "@/components/form-label";
+import { useToast } from "@/components/toast-provider";
 import { cn, formatDate } from "@/lib/utils";
 
 type SelectableMessage = {
@@ -38,6 +40,7 @@ export function SessionSelection({
   const formRef = useRef<HTMLFormElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
+  const { pushToast } = useToast();
 
   const selectionRange =
     anchorIndex === null || focusIndex === null
@@ -96,16 +99,34 @@ export function SessionSelection({
 
       if (!result.ok) {
         setErrorMessage(result.error);
+        pushToast({
+          title: "No fue posible enviar el mensaje",
+          description: result.error,
+          variant: "error",
+          durationMs: 7000,
+        });
         return;
       }
 
       setDraft("");
+      pushToast({
+        title: "Mensaje enviado",
+        description: "La conversación se actualizó correctamente.",
+        variant: "success",
+        durationMs: 7000,
+      });
       textareaRef.current?.focus();
       startTransition(() => {
         router.refresh();
       });
     } catch {
       setErrorMessage("No fue posible enviar el mensaje al modelo.");
+      pushToast({
+        title: "No fue posible enviar el mensaje",
+        description: "No fue posible enviar el mensaje al modelo.",
+        variant: "error",
+        durationMs: 7000,
+      });
     } finally {
       setIsSending(false);
     }
@@ -129,7 +150,7 @@ export function SessionSelection({
           </div>
 
           <label className="mt-5 block space-y-2">
-            <span className="text-sm font-medium">Your message</span>
+            <FormLabel required>Your message</FormLabel>
             <textarea
               ref={textareaRef}
               className="field min-h-32"
@@ -142,6 +163,7 @@ export function SessionSelection({
                 }
               }}
               placeholder="Escribe tu mensaje para iniciar o continuar la conversación con el modelo."
+              required
               disabled={!chatEnabled || isSending}
             />
           </label>

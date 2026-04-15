@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { createProject } from "@/app/actions";
+import { ProjectCreateForm } from "@/components/project-create-form";
 import { prisma } from "@/lib/prisma";
 import { formatDate } from "@/lib/utils";
 
@@ -33,26 +33,7 @@ export default async function ProjectsPage() {
           </p>
         </div>
 
-        <form action={createProject} className="surface rounded-[1.75rem] p-5 sm:p-6">
-          <h2 className="text-lg font-semibold">Create project</h2>
-          <div className="mt-4 space-y-4">
-            <label className="block space-y-2">
-              <span className="text-sm font-medium">Name</span>
-              <input name="name" className="field" placeholder="Atención dermocosmética" required />
-            </label>
-            <label className="block space-y-2">
-              <span className="text-sm font-medium">Description</span>
-              <textarea
-                name="description"
-                className="field min-h-28"
-                placeholder="Objetivo del laboratorio, dominio conversacional, notas del proyecto."
-              />
-            </label>
-            <button type="submit" className="button-primary w-full">
-              Create Project
-            </button>
-          </div>
-        </form>
+        <ProjectCreateForm />
       </section>
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">

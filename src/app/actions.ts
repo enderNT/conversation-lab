@@ -24,6 +24,7 @@ import {
   validateDerivedExample,
 } from "@/lib/cases";
 import { generateAssistantReply } from "@/lib/openai";
+import type { ActionFormState } from "@/lib/form-state";
 import { prisma } from "@/lib/prisma";
 import { ARTIFACT_TYPES, TASK_TYPES } from "@/lib/types";
 import { asOptionalString } from "@/lib/utils";
@@ -91,6 +92,57 @@ const derivedExampleSchema = z.object({
   relationType: z.nativeEnum(RelationType).optional(),
   relationNotes: z.string().trim().default(""),
 });
+
+function buildActionErrorState(message: string): ActionFormState {
+  return {
+    status: "error",
+    message,
+    eventId: Date.now(),
+    redirectTo: null,
+    navigationMode: null,
+    shouldRefresh: false,
+  };
+}
+
+function buildActionSuccessState(
+  message: string,
+  options?: {
+    redirectTo?: string;
+    navigationMode?: "push" | "replace";
+  },
+): ActionFormState {
+  return {
+    status: "success",
+    message,
+    eventId: Date.now(),
+    redirectTo: options?.redirectTo ?? null,
+    navigationMode: options?.navigationMode ?? null,
+    shouldRefresh: options?.redirectTo ? false : false,
+  };
+}
+
+function buildActionRefreshSuccessState(message: string): ActionFormState {
+  return {
+    status: "success",
+    message,
+    eventId: Date.now(),
+    redirectTo: null,
+    navigationMode: null,
+    shouldRefresh: true,
+  };
+}
+
+function getActionErrorMessage(error: unknown, fallbackMessage: string) {
+  if (error instanceof z.ZodError) {
+    return error.issues[0]?.message ?? fallbackMessage;
+  }
+
+  if (error instanceof Error && error.message.trim()) {
+    return error.message;
+  }
+
+  return fallbackMessage;
+}
 
 function parseTaskSchemaText(value: string) {
   const parsedValue = JSON.parse(value) as unknown;
@@ -187,6 +239,40 @@ export async function createProject(formData: FormData) {
   redirect(`/projects/${project.id}`);
 }
 
+export async function createProjectWithFeedback(
+  _previousState: ActionFormState,
+  formData: FormData,
+) {
+  const parsed = projectSchema.safeParse({
+    name: asOptionalString(formData.get("name")),
+    description: asOptionalString(formData.get("description")),
+  });
+
+  if (!parsed.success) {
+    return buildActionErrorState(getActionErrorMessage(parsed.error, "El nombre es obligatorio."));
+  }
+
+  let projectId = "";
+
+  try {
+    const project = await prisma.project.create({
+      data: parsed.data,
+    });
+
+    projectId = project.id;
+  } catch (error) {
+    return buildActionErrorState(
+      getActionErrorMessage(error, "No fue posible crear el proyecto."),
+    );
+  }
+
+  revalidatePath("/");
+  return buildActionSuccessState("Proyecto creado correctamente.", {
+    redirectTo: `/projects/${projectId}`,
+    navigationMode: "push",
+  });
+}
+
 export async function createSession(projectId: string, formData: FormData) {
   const parsed = sessionSchema.parse({
     title: asOptionalString(formData.get("title")),
@@ -201,6 +287,43 @@ export async function createSession(projectId: string, formData: FormData) {
 
   revalidatePath(`/projects/${projectId}`);
   redirect(`/projects/${projectId}/sessions/${session.id}`);
+}
+
+export async function createSessionWithFeedback(
+  projectId: string,
+  _previousState: ActionFormState,
+  formData: FormData,
+) {
+  const parsed = sessionSchema.safeParse({
+    title: asOptionalString(formData.get("title")),
+  });
+
+  if (!parsed.success) {
+    return buildActionErrorState(getActionErrorMessage(parsed.error, "No fue posible crear la sesión."));
+  }
+
+  let sessionId = "";
+
+  try {
+    const session = await prisma.session.create({
+      data: {
+        projectId,
+        title: parsed.data.title || null,
+      },
+    });
+
+    sessionId = session.id;
+  } catch (error) {
+    return buildActionErrorState(
+      getActionErrorMessage(error, "No fue posible crear la sesión."),
+    );
+  }
+
+  revalidatePath(`/projects/${projectId}`);
+  return buildActionSuccessState("Sesión creada correctamente.", {
+    redirectTo: `/projects/${projectId}/sessions/${sessionId}`,
+    navigationMode: "push",
+  });
 }
 
 export async function sendSessionMessage(
@@ -403,6 +526,137 @@ export async function createCase(
   redirect(`/cases/${createdCase.id}`);
 }
 
+export async function createCaseWithFeedback(
+  projectId: string,
+  sessionId: string,
+  _previousState: ActionFormState,
+  formData: FormData,
+) {
+  const startOrderIndex = Number.parseInt(String(formData.get("startOrderIndex") ?? ""), 10);
+  const endOrderIndex = Number.parseInt(String(formData.get("endOrderIndex") ?? ""), 10);
+
+  if (
+    !Number.isInteger(startOrderIndex) ||
+    !Number.isInteger(endOrderIndex) ||
+    startOrderIndex > endOrderIndex
+  ) {
+    return buildActionErrorState("La selección de mensajes no es válida.");
+  }
+
+  let selectedMessages;
+  let contextMessages;
+
+  try {
+    [selectedMessages, contextMessages] = await Promise.all([
+      prisma.message.findMany({
+        where: {
+          sessionId,
+          orderIndex: {
+            gte: startOrderIndex,
+            lte: endOrderIndex,
+          },
+        },
+        orderBy: { orderIndex: "asc" },
+      }),
+      prisma.message.findMany({
+        where: {
+          sessionId,
+          orderIndex: {
+            gte: Math.max(0, startOrderIndex - 2),
+            lte: endOrderIndex + 2,
+          },
+        },
+        orderBy: { orderIndex: "asc" },
+      }),
+    ]);
+  } catch (error) {
+    return buildActionErrorState(
+      getActionErrorMessage(error, "No fue posible cargar la selección del caso."),
+    );
+  }
+
+  if (selectedMessages.length !== endOrderIndex - startOrderIndex + 1) {
+    return buildActionErrorState("La selección debe ser consecutiva.");
+  }
+
+  const conversationSlice = toConversationSlice(selectedMessages);
+  const surroundingContext = toConversationSlice(
+    contextMessages.filter(
+      (message) =>
+        message.orderIndex < startOrderIndex || message.orderIndex > endOrderIndex,
+    ),
+  );
+  const parsed = caseSchema.safeParse({
+    title: asOptionalString(formData.get("title")),
+    sourceSummary: asOptionalString(formData.get("sourceSummary")),
+    lastUserMessage:
+      asOptionalString(formData.get("lastUserMessage")) ||
+      deriveLastUserMessage(conversationSlice),
+    mainIntent: asOptionalString(formData.get("mainIntent")),
+    whyThisCaseIsUseful: asOptionalString(formData.get("whyThisCaseIsUseful")),
+    ambiguityLevel: asOptionalString(formData.get("ambiguityLevel")),
+    difficultyLevel: asOptionalString(formData.get("difficultyLevel")),
+    interpretationNotes: asOptionalString(formData.get("interpretationNotes")),
+    status: formData.get("status"),
+    reviewStatus: formData.get("reviewStatus"),
+    updatedBy: asOptionalString(formData.get("updatedBy")) || "human",
+  });
+
+  if (!parsed.success) {
+    return buildActionErrorState(getActionErrorMessage(parsed.error, "No fue posible crear el caso."));
+  }
+
+  const taskCandidateIds = extractTaskCandidateIds(formData);
+  const artifacts = extractCaseArtifacts(formData);
+  const interpretation = extractCaseInterpretation(formData);
+
+  let createdCaseId = "";
+
+  try {
+    const createdCase = await prisma.case.create({
+      data: {
+        projectId,
+        sessionId,
+        title: parsed.data.title || null,
+        conversationSliceJson: conversationSlice,
+        sourceContextJson: surroundingContext,
+        selectedTurnIdsJson: selectedMessages.map((message) => message.id),
+        sourceSummary: parsed.data.sourceSummary,
+        lastUserMessage: parsed.data.lastUserMessage,
+        interpretationJson: interpretation,
+        sourceMetadataJson: buildSourceMetadata({
+          projectId,
+          sessionId,
+          selectedTurnIds: selectedMessages.map((message) => message.id),
+          startOrderIndex,
+          endOrderIndex,
+        }),
+        taskCandidatesJson: taskCandidateIds,
+        projectionStatus: buildProjectionStatus(taskCandidateIds, 0),
+        reviewStatus: parsed.data.reviewStatus,
+        status: parsed.data.status,
+        createdBy: "human",
+        updatedBy: parsed.data.updatedBy,
+        artifacts: {
+          create: artifacts,
+        },
+      },
+    });
+
+    createdCaseId = createdCase.id;
+  } catch (error) {
+    return buildActionErrorState(
+      getActionErrorMessage(error, "No fue posible guardar el caso."),
+    );
+  }
+
+  revalidateCasePaths(projectId, sessionId, createdCaseId);
+  return buildActionSuccessState("Caso guardado correctamente.", {
+    redirectTo: `/cases/${createdCaseId}`,
+    navigationMode: "push",
+  });
+}
+
 export async function updateCase(caseId: string, formData: FormData) {
   const existingCase = await prisma.case.findUnique({
     where: { id: caseId },
@@ -474,6 +728,103 @@ export async function updateCase(caseId: string, formData: FormData) {
   redirect(`/cases/${caseId}`);
 }
 
+export async function updateCaseWithFeedback(
+  caseId: string,
+  _previousState: ActionFormState,
+  formData: FormData,
+) {
+  let existingCase;
+
+  try {
+    existingCase = await prisma.case.findUnique({
+      where: { id: caseId },
+      select: {
+        id: true,
+        projectId: true,
+        sessionId: true,
+        derivedExamples: {
+          select: { id: true },
+        },
+      },
+    });
+  } catch (error) {
+    return buildActionErrorState(
+      getActionErrorMessage(error, "No fue posible cargar el caso."),
+    );
+  }
+
+  if (!existingCase) {
+    return buildActionErrorState("El caso no existe.");
+  }
+
+  const parsed = caseSchema.safeParse({
+    title: asOptionalString(formData.get("title")),
+    sourceSummary: asOptionalString(formData.get("sourceSummary")),
+    lastUserMessage: asOptionalString(formData.get("lastUserMessage")),
+    mainIntent: asOptionalString(formData.get("mainIntent")),
+    whyThisCaseIsUseful: asOptionalString(formData.get("whyThisCaseIsUseful")),
+    ambiguityLevel: asOptionalString(formData.get("ambiguityLevel")),
+    difficultyLevel: asOptionalString(formData.get("difficultyLevel")),
+    interpretationNotes: asOptionalString(formData.get("interpretationNotes")),
+    status: formData.get("status"),
+    reviewStatus: formData.get("reviewStatus"),
+    updatedBy: asOptionalString(formData.get("updatedBy")) || "human",
+  });
+
+  if (!parsed.success) {
+    return buildActionErrorState(getActionErrorMessage(parsed.error, "No fue posible actualizar el caso."));
+  }
+
+  const taskCandidateIds = extractTaskCandidateIds(formData);
+  const artifacts = extractCaseArtifacts(formData);
+  const interpretation = extractCaseInterpretation(formData);
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      await tx.case.update({
+        where: { id: caseId },
+        data: {
+          title: parsed.data.title || null,
+          sourceSummary: parsed.data.sourceSummary,
+          lastUserMessage: parsed.data.lastUserMessage,
+          interpretationJson: interpretation,
+          taskCandidatesJson: taskCandidateIds,
+          projectionStatus: buildProjectionStatus(
+            taskCandidateIds,
+            existingCase.derivedExamples.length,
+          ),
+          reviewStatus: parsed.data.reviewStatus,
+          status: parsed.data.status,
+          updatedBy: parsed.data.updatedBy,
+        },
+      });
+
+      await tx.caseArtifact.deleteMany({
+        where: { caseId },
+      });
+
+      for (const artifact of artifacts) {
+        await tx.caseArtifact.create({
+          data: {
+            caseId,
+            ...artifact,
+          },
+        });
+      }
+    });
+  } catch (error) {
+    return buildActionErrorState(
+      getActionErrorMessage(error, "No fue posible actualizar el caso."),
+    );
+  }
+
+  revalidateCasePaths(existingCase.projectId, existingCase.sessionId, caseId);
+  return buildActionSuccessState("Caso actualizado correctamente.", {
+    redirectTo: `/cases/${caseId}`,
+    navigationMode: "replace",
+  });
+}
+
 export async function updateCaseStatus(caseId: string, formData: FormData) {
   const parsed = z
     .object({
@@ -496,6 +847,47 @@ export async function updateCaseStatus(caseId: string, formData: FormData) {
   });
 
   revalidateCasePaths(caseRecord.projectId, caseRecord.sessionId, caseRecord.id);
+}
+
+export async function updateCaseStatusWithFeedback(
+  caseId: string,
+  _previousState: ActionFormState,
+  formData: FormData,
+) {
+  const parsed = z
+    .object({
+      status: z.nativeEnum(CaseStatus),
+    })
+    .safeParse({
+      status: formData.get("status"),
+    });
+
+  if (!parsed.success) {
+    return buildActionErrorState(getActionErrorMessage(parsed.error, "No fue posible actualizar el status del caso."));
+  }
+
+  let caseRecord;
+
+  try {
+    caseRecord = await prisma.case.update({
+      where: { id: caseId },
+      data: {
+        status: parsed.data.status,
+      },
+      select: {
+        id: true,
+        projectId: true,
+        sessionId: true,
+      },
+    });
+  } catch (error) {
+    return buildActionErrorState(
+      getActionErrorMessage(error, "No fue posible actualizar el status del caso."),
+    );
+  }
+
+  revalidateCasePaths(caseRecord.projectId, caseRecord.sessionId, caseRecord.id);
+  return buildActionRefreshSuccessState("Status del caso actualizado correctamente.");
 }
 
 export async function createTaskSpec(formData: FormData) {
@@ -539,6 +931,63 @@ export async function createTaskSpec(formData: FormData) {
   redirect("/tasks");
 }
 
+export async function createTaskSpecWithFeedback(
+  _previousState: ActionFormState,
+  formData: FormData,
+) {
+  const parsed = taskSpecSchema.safeParse({
+    name: asOptionalString(formData.get("name")),
+    slug: asOptionalString(formData.get("slug")),
+    description: asOptionalString(formData.get("description")),
+    taskType: formData.get("taskType") || TaskType.custom,
+    inputSchemaJson: asOptionalString(formData.get("inputSchemaJson")) || "[]",
+    outputSchemaJson: asOptionalString(formData.get("outputSchemaJson")) || "[]",
+    requiredArtifacts: asOptionalString(formData.get("requiredArtifacts")),
+    optionalArtifacts: asOptionalString(formData.get("optionalArtifacts")),
+    validationRulesJson: asOptionalString(formData.get("validationRulesJson")) || "{}",
+    exportShapeJson: asOptionalString(formData.get("exportShapeJson")) || "{}",
+    version: formData.get("version") || 1,
+    isActive: formData.get("isActive") === "on",
+    updatedBy: asOptionalString(formData.get("updatedBy")) || "human",
+  });
+
+  if (!parsed.success) {
+    return buildActionErrorState(getActionErrorMessage(parsed.error, "No fue posible crear el task spec."));
+  }
+
+  try {
+    await prisma.taskSpec.create({
+      data: {
+        name: parsed.data.name,
+        slug: parsed.data.slug,
+        description: parsed.data.description,
+        taskType: parsed.data.taskType,
+        inputSchemaJson: parseTaskSchemaText(parsed.data.inputSchemaJson),
+        outputSchemaJson: parseTaskSchemaText(parsed.data.outputSchemaJson),
+        requiredArtifactsJson: parseArtifactList(parsed.data.requiredArtifacts),
+        optionalArtifactsJson: parseArtifactList(parsed.data.optionalArtifacts),
+        validationRulesJson: parseStrictJsonValue(parsed.data.validationRulesJson) as Prisma.InputJsonValue,
+        exportShapeJson: parseStrictJsonValue(parsed.data.exportShapeJson) as Prisma.InputJsonValue,
+        isActive: parsed.data.isActive,
+        version: parsed.data.version,
+        createdBy: parsed.data.updatedBy,
+        updatedBy: parsed.data.updatedBy,
+      },
+    });
+  } catch (error) {
+    return buildActionErrorState(
+      getActionErrorMessage(error, "No fue posible crear el task spec."),
+    );
+  }
+
+  revalidatePath("/tasks");
+  revalidatePath("/cases");
+  return buildActionSuccessState("Task spec creado correctamente.", {
+    redirectTo: "/tasks",
+    navigationMode: "replace",
+  });
+}
+
 export async function updateTaskSpec(taskSpecId: string, formData: FormData) {
   const parsed = taskSpecSchema.parse({
     name: asOptionalString(formData.get("name")),
@@ -579,6 +1028,65 @@ export async function updateTaskSpec(taskSpecId: string, formData: FormData) {
   revalidatePath("/cases");
   revalidatePath("/exports");
   redirect("/tasks");
+}
+
+export async function updateTaskSpecWithFeedback(
+  taskSpecId: string,
+  _previousState: ActionFormState,
+  formData: FormData,
+) {
+  const parsed = taskSpecSchema.safeParse({
+    name: asOptionalString(formData.get("name")),
+    slug: asOptionalString(formData.get("slug")),
+    description: asOptionalString(formData.get("description")),
+    taskType: formData.get("taskType") || TaskType.custom,
+    inputSchemaJson: asOptionalString(formData.get("inputSchemaJson")) || "[]",
+    outputSchemaJson: asOptionalString(formData.get("outputSchemaJson")) || "[]",
+    requiredArtifacts: asOptionalString(formData.get("requiredArtifacts")),
+    optionalArtifacts: asOptionalString(formData.get("optionalArtifacts")),
+    validationRulesJson: asOptionalString(formData.get("validationRulesJson")) || "{}",
+    exportShapeJson: asOptionalString(formData.get("exportShapeJson")) || "{}",
+    version: formData.get("version") || 1,
+    isActive: formData.get("isActive") === "on",
+    updatedBy: asOptionalString(formData.get("updatedBy")) || "human",
+  });
+
+  if (!parsed.success) {
+    return buildActionErrorState(getActionErrorMessage(parsed.error, "No fue posible actualizar el task spec."));
+  }
+
+  try {
+    await prisma.taskSpec.update({
+      where: { id: taskSpecId },
+      data: {
+        name: parsed.data.name,
+        slug: parsed.data.slug,
+        description: parsed.data.description,
+        taskType: parsed.data.taskType,
+        inputSchemaJson: parseTaskSchemaText(parsed.data.inputSchemaJson),
+        outputSchemaJson: parseTaskSchemaText(parsed.data.outputSchemaJson),
+        requiredArtifactsJson: parseArtifactList(parsed.data.requiredArtifacts),
+        optionalArtifactsJson: parseArtifactList(parsed.data.optionalArtifacts),
+        validationRulesJson: parseStrictJsonValue(parsed.data.validationRulesJson) as Prisma.InputJsonValue,
+        exportShapeJson: parseStrictJsonValue(parsed.data.exportShapeJson) as Prisma.InputJsonValue,
+        isActive: parsed.data.isActive,
+        version: parsed.data.version,
+        updatedBy: parsed.data.updatedBy,
+      },
+    });
+  } catch (error) {
+    return buildActionErrorState(
+      getActionErrorMessage(error, "No fue posible actualizar el task spec."),
+    );
+  }
+
+  revalidatePath("/tasks");
+  revalidatePath("/cases");
+  revalidatePath("/exports");
+  return buildActionSuccessState("Task spec actualizado correctamente.", {
+    redirectTo: "/tasks",
+    navigationMode: "replace",
+  });
 }
 
 export async function createDerivedExample(caseId: string, formData: FormData) {
@@ -686,6 +1194,150 @@ export async function createDerivedExample(caseId: string, formData: FormData) {
   redirect(`/cases/${caseId}?taskSpecId=${createdExample.taskSpecId}`);
 }
 
+export async function createDerivedExampleWithFeedback(
+  caseId: string,
+  _previousState: ActionFormState,
+  formData: FormData,
+) {
+  const parsed = derivedExampleSchema.safeParse({
+    taskSpecId: asOptionalString(formData.get("taskSpecId")),
+    title: asOptionalString(formData.get("title")),
+    inputPayloadJson: asOptionalString(formData.get("inputPayloadJson")),
+    outputPayloadJson: asOptionalString(formData.get("outputPayloadJson")),
+    generationMode: formData.get("generationMode") || GenerationMode.assisted,
+    reviewStatus: formData.get("reviewStatus") || DerivedExampleStatus.generated,
+    usedArtifactsJson: asOptionalString(formData.get("usedArtifactsJson")) || "[]",
+    updatedBy: asOptionalString(formData.get("updatedBy")) || "human",
+    relatedDerivedExampleId: asOptionalString(formData.get("relatedDerivedExampleId")),
+    relationType: formData.get("relationType") || undefined,
+    relationNotes: asOptionalString(formData.get("relationNotes")),
+  });
+
+  if (!parsed.success) {
+    return buildActionErrorState(getActionErrorMessage(parsed.error, "No fue posible guardar el derived example."));
+  }
+
+  let caseRecord;
+  let taskSpec;
+
+  try {
+    [caseRecord, taskSpec] = await Promise.all([
+      prisma.case.findUnique({
+        where: { id: caseId },
+        include: {
+          artifacts: true,
+        },
+      }),
+      prisma.taskSpec.findUnique({
+        where: { id: parsed.data.taskSpecId },
+      }),
+    ]);
+  } catch (error) {
+    return buildActionErrorState(
+      getActionErrorMessage(error, "No fue posible preparar el derived example."),
+    );
+  }
+
+  if (!caseRecord || !taskSpec) {
+    return buildActionErrorState("El caso o el task spec no existen.");
+  }
+
+  let inputPayload;
+  let outputPayload;
+
+  try {
+    inputPayload = parseStrictJsonValue(parsed.data.inputPayloadJson);
+    outputPayload = parseStrictJsonValue(parsed.data.outputPayloadJson);
+  } catch (error) {
+    return buildActionErrorState(
+      getActionErrorMessage(error, "Los payloads deben ser JSON válidos."),
+    );
+  }
+
+  if (
+    typeof inputPayload !== "object" ||
+    inputPayload === null ||
+    Array.isArray(inputPayload) ||
+    typeof outputPayload !== "object" ||
+    outputPayload === null ||
+    Array.isArray(outputPayload)
+  ) {
+    return buildActionErrorState("Los payloads de entrada y salida deben ser objetos JSON.");
+  }
+
+  const validationState = validateDerivedExample({
+    taskSpec,
+    inputPayload: inputPayload as Record<string, Prisma.JsonValue>,
+    outputPayload: outputPayload as Record<string, Prisma.JsonValue>,
+    caseArtifacts: caseRecord.artifacts,
+  });
+
+  const usedArtifacts = parseArtifactList(parsed.data.usedArtifactsJson);
+  let createdTaskSpecId = taskSpec.id;
+
+  try {
+    const createdExample = await prisma.$transaction(async (tx) => {
+      const derivedExample = await tx.derivedExample.create({
+        data: {
+          caseId,
+          taskSpecId: taskSpec.id,
+          title: parsed.data.title || null,
+          inputPayloadJson: inputPayload as Prisma.InputJsonValue,
+          outputPayloadJson: outputPayload as Prisma.InputJsonValue,
+          generationMode: parsed.data.generationMode,
+          reviewStatus: parsed.data.reviewStatus,
+          validationStateJson: validationState as Prisma.InputJsonValue,
+          provenanceJson: {
+            source_case_id: caseRecord.id,
+            source_session_id: caseRecord.sessionId,
+            source_selected_turn_ids: caseRecord.selectedTurnIdsJson,
+            used_artifacts: usedArtifacts,
+            edited_by: parsed.data.updatedBy,
+            generation_mode: parsed.data.generationMode,
+            task_spec_version: taskSpec.version,
+          } as Prisma.InputJsonValue,
+          version: taskSpec.version,
+          createdBy: parsed.data.updatedBy,
+          updatedBy: parsed.data.updatedBy,
+        },
+      });
+
+      if (parsed.data.relatedDerivedExampleId && parsed.data.relationType) {
+        await tx.projectionRelation.create({
+          data: {
+            fromDerivedExampleId: parsed.data.relatedDerivedExampleId,
+            toDerivedExampleId: derivedExample.id,
+            relationType: parsed.data.relationType,
+            notes: parsed.data.relationNotes || null,
+          },
+        });
+      }
+
+      await tx.case.update({
+        where: { id: caseId },
+        data: {
+          projectionStatus: "projected",
+          updatedBy: parsed.data.updatedBy,
+        },
+      });
+
+      return derivedExample;
+    });
+
+    createdTaskSpecId = createdExample.taskSpecId;
+  } catch (error) {
+    return buildActionErrorState(
+      getActionErrorMessage(error, "No fue posible guardar el derived example."),
+    );
+  }
+
+  revalidateCasePaths(caseRecord.projectId, caseRecord.sessionId, caseId);
+  return buildActionSuccessState("Derived example guardado correctamente.", {
+    redirectTo: `/cases/${caseId}?taskSpecId=${createdTaskSpecId}`,
+    navigationMode: "replace",
+  });
+}
+
 export async function updateDerivedExampleReviewStatus(
   derivedExampleId: string,
   formData: FormData,
@@ -719,6 +1371,55 @@ export async function updateDerivedExampleReviewStatus(
     derivedExample.case.sessionId,
     derivedExample.case.id,
   );
+}
+
+export async function updateDerivedExampleReviewStatusWithFeedback(
+  derivedExampleId: string,
+  _previousState: ActionFormState,
+  formData: FormData,
+) {
+  const parsed = z
+    .object({
+      reviewStatus: z.nativeEnum(DerivedExampleStatus),
+    })
+    .safeParse({
+      reviewStatus: formData.get("reviewStatus"),
+    });
+
+  if (!parsed.success) {
+    return buildActionErrorState(getActionErrorMessage(parsed.error, "No fue posible actualizar el review status."));
+  }
+
+  let derivedExample;
+
+  try {
+    derivedExample = await prisma.derivedExample.update({
+      where: { id: derivedExampleId },
+      data: {
+        reviewStatus: parsed.data.reviewStatus,
+      },
+      include: {
+        case: {
+          select: {
+            id: true,
+            projectId: true,
+            sessionId: true,
+          },
+        },
+      },
+    });
+  } catch (error) {
+    return buildActionErrorState(
+      getActionErrorMessage(error, "No fue posible actualizar el review status."),
+    );
+  }
+
+  revalidateCasePaths(
+    derivedExample.case.projectId,
+    derivedExample.case.sessionId,
+    derivedExample.case.id,
+  );
+  return buildActionRefreshSuccessState("Review status actualizado correctamente.");
 }
 
 export async function createProjectionRelation(caseId: string, formData: FormData) {
@@ -763,4 +1464,73 @@ export async function createProjectionRelation(caseId: string, formData: FormDat
 
   revalidateCasePaths(caseRecord.projectId, caseRecord.sessionId, caseId);
   redirect(`/cases/${caseId}`);
+}
+
+export async function createProjectionRelationWithFeedback(
+  caseId: string,
+  _previousState: ActionFormState,
+  formData: FormData,
+) {
+  const parsed = z
+    .object({
+      fromDerivedExampleId: z.string().trim().min(1),
+      toDerivedExampleId: z.string().trim().min(1),
+      relationType: z.nativeEnum(RelationType),
+      notes: z.string().trim().default(""),
+    })
+    .safeParse({
+      fromDerivedExampleId: asOptionalString(formData.get("fromDerivedExampleId")),
+      toDerivedExampleId: asOptionalString(formData.get("toDerivedExampleId")),
+      relationType: formData.get("relationType"),
+      notes: asOptionalString(formData.get("notes")),
+    });
+
+  if (!parsed.success) {
+    return buildActionErrorState(getActionErrorMessage(parsed.error, "No fue posible crear la relación."));
+  }
+
+  if (parsed.data.fromDerivedExampleId === parsed.data.toDerivedExampleId) {
+    return buildActionErrorState("La relación debe conectar dos derived examples distintos.");
+  }
+
+  let caseRecord;
+
+  try {
+    caseRecord = await prisma.case.findUnique({
+      where: { id: caseId },
+      select: {
+        projectId: true,
+        sessionId: true,
+      },
+    });
+  } catch (error) {
+    return buildActionErrorState(
+      getActionErrorMessage(error, "No fue posible cargar el caso."),
+    );
+  }
+
+  if (!caseRecord) {
+    return buildActionErrorState("El caso no existe.");
+  }
+
+  try {
+    await prisma.projectionRelation.create({
+      data: {
+        fromDerivedExampleId: parsed.data.fromDerivedExampleId,
+        toDerivedExampleId: parsed.data.toDerivedExampleId,
+        relationType: parsed.data.relationType,
+        notes: parsed.data.notes || null,
+      },
+    });
+  } catch (error) {
+    return buildActionErrorState(
+      getActionErrorMessage(error, "No fue posible crear la relación."),
+    );
+  }
+
+  revalidateCasePaths(caseRecord.projectId, caseRecord.sessionId, caseId);
+  return buildActionSuccessState("Relación creada correctamente.", {
+    redirectTo: `/cases/${caseId}`,
+    navigationMode: "replace",
+  });
 }

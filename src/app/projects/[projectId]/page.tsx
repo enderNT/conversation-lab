@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { createSession } from "@/app/actions";
+import { SessionCreateForm } from "@/components/session-create-form";
 import { prisma } from "@/lib/prisma";
 import { formatDate } from "@/lib/utils";
 
@@ -74,21 +74,7 @@ export default async function ProjectDetailPage({
           </div>
         </div>
 
-        <form action={createSession.bind(null, project.id)} className="surface rounded-[1.75rem] p-5 sm:p-6">
-          <h2 className="text-lg font-semibold">Create session</h2>
-          <p className="mt-1 text-sm text-[var(--muted)]">
-            Usa un título corto o déjalo vacío para una sesión sin nombre.
-          </p>
-          <div className="mt-4 space-y-4">
-            <label className="block space-y-2">
-              <span className="text-sm font-medium">Title</span>
-              <input name="title" className="field" placeholder="Consulta sobre manchas en rostro" />
-            </label>
-            <button type="submit" className="button-primary w-full">
-              Create Session
-            </button>
-          </div>
-        </form>
+        <SessionCreateForm projectId={project.id} />
       </section>
 
       <section className="space-y-4">
