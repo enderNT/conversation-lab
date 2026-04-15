@@ -106,6 +106,20 @@ Esta app está preparada para desplegarse en Coolify sin publicar un puerto host
 - Si despliegas con `docker-compose.yml` en Coolify, evita mapear `3000:3000`; Coolify debe enrutar al puerto interno del servicio.
 - Si Coolify te pide el puerto interno, usa `3000`.
 
+### Pasos exactos en Coolify con Compose
+
+1. Crea el recurso como `Docker Compose`, no como `Raw Compose Deployment`.
+2. Usa este `docker-compose.yml` del repo como fuente de verdad.
+3. Cuando Coolify detecte el servicio `conversation-lab`, abre la configuración de dominio de ese servicio.
+4. En el campo del dominio escribe tu dominio con el puerto interno del contenedor, por ejemplo: `https://lab.tudominio.com:3000`.
+5. Ese `:3000` no significa que el usuario final vaya a navegar a `:3000`; solo le dice a Coolify a qué puerto interno del contenedor debe enviar el tráfico del proxy.
+6. En variables de entorno de Coolify completa al menos `OPENAI_API_KEY`. `DATABASE_URL` puede quedar con su valor por defecto `file:/app/data/dev.db` y `OPENAI_MODEL` es opcional.
+7. Despliega. Coolify publicará la app en el dominio normal (`https://lab.tudominio.com`) aunque internamente la app siga escuchando en `3000`.
+
+### Cuándo usar `ports:`
+
+Solo usa `ports:` si quieres publicar un puerto del servidor directamente, por ejemplo `IP_DEL_SERVIDOR:3000`. Para una app web normal detrás del proxy de Coolify, no hace falta y suele ser justamente la causa del conflicto de puertos.
+
 ## Export JSON
 
 Export por defecto de casos aprobados:
