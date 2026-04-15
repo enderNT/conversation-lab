@@ -1,0 +1,73 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+enum MessageRole {
+  user
+  assistant
+}
+
+enum CaseStatus {
+  draft
+  reviewed
+  approved
+}
+
+model Project {
+  id          String    @id @default(cuid())
+  name        String
+  description String    @default("")
+  createdAt   DateTime  @default(now())
+  sessions    Session[]
+  cases       Case[]
+}
+
+model Session {
+  id        String    @id @default(cuid())
+  projectId String
+  title     String?
+  createdAt DateTime  @default(now())
+  project   Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  messages  Message[]
+  cases     Case[]
+
+  @@index([projectId, createdAt])
+}
+
+model Message {
+  id           String      @id @default(cuid())
+  sessionId    String
+  role         MessageRole
+  text         String
+  orderIndex   Int
+  createdAt    DateTime    @default(now())
+  metadataJson Json?
+  session      Session     @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, orderIndex])
+  @@index([sessionId, createdAt])
+}
+
+model Case {
+  id                    String     @id @default(cuid())
+  projectId             String
+  sessionId             String
+  title                 String?
+  conversationSliceJson Json
+  lastUserMessage       String
+  labelsJson            Json
+  artifactsJson         Json
+  notes                 String     @default("")
+  status                CaseStatus @default(draft)
+  createdAt             DateTime   @default(now())
+  updatedAt             DateTime   @updatedAt
+  project               Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  session               Session    @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, status])
+  @@index([sessionId, createdAt])
+}

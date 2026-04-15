@@ -1,36 +1,112 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Conversation Lab
 
-## Getting Started
+Conversation Lab es un MVP para crear proyectos, conversar con un LLM dentro de sesiones persistidas, seleccionar uno o más turnos consecutivos y convertir ese slice en un caso estructurado solo después de una acción explícita del usuario.
 
-First, run the development server:
+## Stack
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+- Bun
+- Next.js App Router + React + TypeScript
+- Prisma
+- SQLite
+- Tailwind CSS v4
+- Docker + Docker Compose
+
+## Flujo cubierto
+
+1. Crear un proyecto.
+2. Crear una sesión dentro del proyecto.
+3. Escribir un mensaje de usuario y enviarlo al LLM configurado.
+4. Guardar el turno del usuario y la respuesta del asistente como mensajes individuales.
+5. Seleccionar un rango consecutivo de turnos.
+6. Abrir el editor de caso desde esa selección.
+7. Completar etiquetas, artefactos, notas y estado.
+8. Guardar el caso manualmente.
+9. Revisar casos en la biblioteca.
+10. Cambiar estado y exportar casos aprobados en JSON.
+
+## Estructura
+
+```text
+prisma/
+	schema.prisma
+	seed.ts
+src/
+	app/
+		api/cases/export/route.ts
+		cases/
+		projects/
+		actions.ts
+	components/
+		app-shell.tsx
+		case-editor-form.tsx
+		session-selection.tsx
+		status-badge.tsx
+	lib/
+		cases.ts
+		prisma.ts
+		types.ts
+		utils.ts
+Dockerfile
+docker-compose.yml
+prisma.config.ts
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Desarrollo local
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+1. Instala dependencias:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+bun install
+```
 
-## Learn More
+2. Configura el entorno copiando `.env.example` a `.env` y completa al menos:
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+OPENAI_API_KEY=...
+OPENAI_MODEL=gpt-4.1-mini
+DATABASE_URL="file:./dev.db"
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+3. Genera cliente Prisma y crea la base SQLite:
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```bash
+bun run db:push
+```
 
-## Deploy on Vercel
+4. Carga datos de ejemplo opcionales:
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```bash
+bun run db:seed
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+5. Inicia la app:
+
+```bash
+bun run dev
+```
+
+La app queda disponible en `http://localhost:3000`.
+
+## Docker
+
+Levanta la app con SQLite persistente en volumen:
+
+```bash
+docker compose up --build
+```
+
+Eso ejecuta `prisma db push`, aplica seed idempotente y arranca la app en `http://localhost:3000`. Para que el chat funcione en Docker, exporta `OPENAI_API_KEY` y opcionalmente `OPENAI_MODEL` antes de levantar Compose.
+
+## Export JSON
+
+Export por defecto de casos aprobados:
+
+```bash
+curl http://localhost:3000/api/cases/export
+```
+
+Export filtrado por proyecto:
+
+```bash
+curl "http://localhost:3000/api/cases/export?projectId=<project_id>"
+```

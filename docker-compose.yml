@@ -1,0 +1,21 @@
+services:
+  conversation-lab:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: file:/app/data/dev.db
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4.1-mini}
+    volumes:
+      - conversation-lab-data:/app/data
+    command: >
+      sh -c "mkdir -p /app/data &&
+      bunx prisma db push &&
+      bun run db:seed &&
+      bun run start"
+
+volumes:
+  conversation-lab-data:

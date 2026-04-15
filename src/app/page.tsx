@@ -1,65 +1,98 @@
-import Image from "next/image";
+import Link from "next/link";
+import { createProject } from "@/app/actions";
+import { prisma } from "@/lib/prisma";
+import { formatDate } from "@/lib/utils";
 
-export default function Home() {
+export const dynamic = "force-dynamic";
+
+export default async function ProjectsPage() {
+  const projects = await prisma.project.findMany({
+    orderBy: { createdAt: "desc" },
+    include: {
+      _count: {
+        select: {
+          sessions: true,
+          cases: true,
+        },
+      },
+    },
+  });
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
+    <div className="space-y-8">
+      <section className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
+        <div>
+          <p className="text-sm uppercase tracking-[0.22em] text-[var(--muted)]">
+            Projects
+          </p>
+          <h1 className="mt-3 max-w-2xl text-4xl font-semibold tracking-tight text-slate-900">
+            Conversa con un LLM, conserva los mejores fragmentos y conviértelos en casos revisados.
           </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+          <p className="mt-4 max-w-2xl text-base leading-8 text-[var(--muted)]">
+            Conversation Lab usa sesiones reales de chat como materia prima del dataset: guarda cada turno, permite seleccionar rangos consecutivos y solo crea un caso cuando lo confirmas manualmente.
           </p>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
+
+        <form action={createProject} className="surface rounded-[1.75rem] p-5 sm:p-6">
+          <h2 className="text-lg font-semibold">Create project</h2>
+          <div className="mt-4 space-y-4">
+            <label className="block space-y-2">
+              <span className="text-sm font-medium">Name</span>
+              <input name="name" className="field" placeholder="Atención dermocosmética" required />
+            </label>
+            <label className="block space-y-2">
+              <span className="text-sm font-medium">Description</span>
+              <textarea
+                name="description"
+                className="field min-h-28"
+                placeholder="Objetivo del laboratorio, dominio conversacional, notas del proyecto."
+              />
+            </label>
+            <button type="submit" className="button-primary w-full">
+              Create Project
+            </button>
+          </div>
+        </form>
+      </section>
+
+      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {projects.length === 0 ? (
+          <div className="surface col-span-full rounded-[1.75rem] p-8 text-sm text-[var(--muted)]">
+            No hay proyectos todavía. Crea uno para empezar a conversar con el modelo y consolidar casos.
+          </div>
+        ) : null}
+
+        {projects.map((project) => (
+          <article key={project.id} className="surface rounded-[1.75rem] p-5 sm:p-6">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-semibold text-slate-900">{project.name}</h2>
+                <p className="mt-2 text-sm leading-7 text-[var(--muted)]">
+                  {project.description || "Sin descripción aún."}
+                </p>
+              </div>
+              <span className="mono rounded-full border border-[var(--line)] px-3 py-1 text-xs text-[var(--muted)]">
+                {formatDate(project.createdAt)}
+              </span>
+            </div>
+
+            <div className="mt-5 grid grid-cols-2 gap-3 text-sm">
+              <div className="rounded-2xl border border-[var(--line)] bg-white/65 p-3">
+                <p className="text-[var(--muted)]">Sessions</p>
+                <p className="mt-2 text-2xl font-semibold">{project._count.sessions}</p>
+              </div>
+              <div className="rounded-2xl border border-[var(--line)] bg-white/65 p-3">
+                <p className="text-[var(--muted)]">Cases</p>
+                <p className="mt-2 text-2xl font-semibold">{project._count.cases}</p>
+              </div>
+            </div>
+
+            <Link href={`/projects/${project.id}`} className="button-primary mt-5 inline-flex">
+              Open Project
+            </Link>
+          </article>
+        ))}
+      </section>
     </div>
   );
 }
