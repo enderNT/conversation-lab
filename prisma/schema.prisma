@@ -13,8 +13,64 @@ enum MessageRole {
 
 enum CaseStatus {
   draft
-  reviewed
+  curated
+  artifact_complete
+  ready_for_projection
+  archived
+}
+
+enum CaseReviewStatus {
+  pending
+  human_reviewed
   approved
+  rejected
+}
+
+enum ProjectionStatus {
+  not_started
+  previewed
+  projected
+}
+
+enum ArtifactType {
+  ideal_search_query
+  ideal_answer
+  expected_route
+  expected_tool
+  relevant_context
+  memory_write_decision
+  policy_flags
+  extracted_slots
+  state_assumptions
+}
+
+enum TaskType {
+  write_query
+  rag_reply
+  routing
+  tool_selection
+  memory_write_decision
+  custom
+}
+
+enum DerivedExampleStatus {
+  draft
+  generated
+  human_reviewed
+  approved
+  rejected
+  exported
+}
+
+enum GenerationMode {
+  manual
+  assisted
+}
+
+enum RelationType {
+  precedes
+  depends_on
+  derived_from_same_case
 }
 
 model Project {
@@ -53,21 +109,111 @@ model Message {
 }
 
 model Case {
-  id                    String     @id @default(cuid())
-  projectId             String
-  sessionId             String
-  title                 String?
+  id                String           @id @default(cuid())
+  projectId         String
+  sessionId         String
+  title             String?
   conversationSliceJson Json
-  lastUserMessage       String
-  labelsJson            Json
-  artifactsJson         Json
-  notes                 String     @default("")
-  status                CaseStatus @default(draft)
-  createdAt             DateTime   @default(now())
-  updatedAt             DateTime   @updatedAt
-  project               Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  session               Session    @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  sourceContextJson Json?
+  selectedTurnIdsJson Json?
+  sourceSummary     String           @default("")
+  lastUserMessage   String
+  labelsJson        Json?
+  artifactsJson     Json?
+  notes             String           @default("")
+  interpretationJson Json?
+  sourceMetadataJson Json?
+  taskCandidatesJson Json?
+  projectionStatus  ProjectionStatus @default(not_started)
+  reviewStatus      CaseReviewStatus @default(pending)
+  status            CaseStatus       @default(draft)
+  createdBy         String           @default("human")
+  updatedBy         String           @default("human")
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  project           Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  session           Session          @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  artifacts         CaseArtifact[]
+  derivedExamples   DerivedExample[]
 
   @@index([projectId, status])
+  @@index([projectId, reviewStatus])
   @@index([sessionId, createdAt])
+}
+
+model CaseArtifact {
+  id             String       @id @default(cuid())
+  caseId         String
+  type           ArtifactType
+  valueJson      Json
+  notes          String?
+  confidence     Float?
+  provenanceJson Json?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  case           Case         @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  @@index([caseId, type])
+}
+
+model TaskSpec {
+  id                  String       @id @default(cuid())
+  name                String
+  slug                String       @unique
+  description         String
+  taskType            TaskType
+  inputSchemaJson     Json
+  outputSchemaJson    Json
+  requiredArtifactsJson Json
+  optionalArtifactsJson Json
+  validationRulesJson Json
+  exportShapeJson     Json
+  isActive            Boolean      @default(true)
+  version             Int          @default(1)
+  createdBy           String       @default("system")
+  updatedBy           String       @default("system")
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+  derivedExamples     DerivedExample[]
+
+  @@index([isActive, slug])
+}
+
+model DerivedExample {
+  id                 String               @id @default(cuid())
+  caseId             String
+  taskSpecId         String
+  title              String?
+  inputPayloadJson   Json
+  outputPayloadJson  Json
+  generationMode     GenerationMode
+  reviewStatus       DerivedExampleStatus @default(draft)
+  validationStateJson Json
+  provenanceJson     Json
+  version            Int                  @default(1)
+  createdBy          String               @default("human")
+  updatedBy          String               @default("human")
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+  case               Case                 @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  taskSpec           TaskSpec             @relation(fields: [taskSpecId], references: [id], onDelete: Cascade)
+  outgoingRelations  ProjectionRelation[] @relation("ProjectionRelationFrom")
+  incomingRelations  ProjectionRelation[] @relation("ProjectionRelationTo")
+
+  @@index([caseId, reviewStatus])
+  @@index([taskSpecId, reviewStatus])
+}
+
+model ProjectionRelation {
+  id                   String         @id @default(cuid())
+  fromDerivedExampleId String
+  toDerivedExampleId   String
+  relationType         RelationType
+  notes                String?
+  createdAt            DateTime       @default(now())
+  fromDerivedExample   DerivedExample @relation("ProjectionRelationFrom", fields: [fromDerivedExampleId], references: [id], onDelete: Cascade)
+  toDerivedExample     DerivedExample @relation("ProjectionRelationTo", fields: [toDerivedExampleId], references: [id], onDelete: Cascade)
+
+  @@index([fromDerivedExampleId, relationType])
+  @@index([toDerivedExampleId, relationType])
 }

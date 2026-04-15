@@ -1,9 +1,9 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { CaseStatus } from "@prisma/client";
 import { CaseEditorForm } from "@/components/case-editor-form";
-import { deriveLastUserMessage, toConversationSlice } from "@/lib/cases";
+import { deriveLastUserMessage, suggestCompatibleTaskSpecs, toConversationSlice } from "@/lib/cases";
 import { prisma } from "@/lib/prisma";
+import { ensureDefaultTaskSpecs } from "@/lib/task-specs";
 import { parseInteger } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -25,21 +25,38 @@ export default async function NewCasePage({
     notFound();
   }
 
-  const session = await prisma.session.findUnique({
-    where: { id: sessionId },
-    include: {
-      project: true,
-      messages: {
-        where: {
-          orderIndex: {
-            gte: start,
-            lte: end,
+  await ensureDefaultTaskSpecs();
+
+  const [session, taskSpecs] = await Promise.all([
+    prisma.session.findUnique({
+      where: { id: sessionId },
+      include: {
+        project: true,
+        messages: {
+          where: {
+            orderIndex: {
+              gte: start,
+              lte: end,
+            },
           },
+          orderBy: { orderIndex: "asc" },
         },
-        orderBy: { orderIndex: "asc" },
       },
-    },
-  });
+    }),
+    prisma.taskSpec.findMany({
+      where: { isActive: true },
+      orderBy: [{ isActive: "desc" }, { name: "asc" }],
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        taskType: true,
+        version: true,
+        requiredArtifactsJson: true,
+        optionalArtifactsJson: true,
+      },
+    }),
+  ]);
 
   if (!session || session.projectId !== projectId) {
     notFound();
@@ -50,6 +67,7 @@ export default async function NewCasePage({
   }
 
   const conversationSlice = toConversationSlice(session.messages);
+  const taskSuggestions = suggestCompatibleTaskSpecs(taskSpecs, []);
 
   return (
     <div className="space-y-8">
@@ -71,22 +89,51 @@ export default async function NewCasePage({
       <CaseEditorForm
         mode="create"
         projectId={projectId}
+        projectName={session.project.name}
         sessionId={sessionId}
+        sessionTitle={session.title || "Untitled session"}
         title=""
+        sourceSummary=""
         lastUserMessage={deriveLastUserMessage(conversationSlice)}
-        labels={{ expected_route: "" }}
-        artifacts={{
-          ideal_search_query: "",
-          ideal_answer: "",
-          expected_tool: "",
+        interpretation={{
+          main_intent: "",
+          subtask_candidates: [],
+          why_this_case_is_useful: "",
+          ambiguity_level: "",
+          difficulty_level: "",
+          notes: "",
+          llm_errors_detected: [],
         }}
-        notes=""
-        status={CaseStatus.draft}
+        artifacts={[]}
+        taskCandidateIds={[]}
+        status="draft"
+        reviewStatus="pending"
+        projectionStatus="not_started"
         conversationSlice={conversationSlice}
+        surroundingContext={[]}
+        sourceMetadataJson={{
+          project_id: projectId,
+          session_id: sessionId,
+          selected_turn_ids: session.messages.map((message) => message.id),
+          selected_range: {
+            start_order_index: start,
+            end_order_index: end,
+            turn_count: session.messages.length,
+          },
+          provenance: {
+            source: "session_chat",
+            selection_mode: "manual_range",
+            conversation_version: 2,
+          },
+        }}
         selection={{
           startOrderIndex: start,
           endOrderIndex: end,
         }}
+        taskSuggestions={taskSuggestions}
+        previewTaskSpec={null}
+        projectionPreview={null}
+        derivedExamples={[]}
       />
     </div>
   );

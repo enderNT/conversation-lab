@@ -10,7 +10,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               Conversation Lab
             </Link>
             <p className="mt-1 text-sm text-[var(--muted)]">
-              Conversación real con LLM, selección manual de turnos y casos exportables.
+              Source cases, typed artifacts, task projections, and reviewable derived examples.
             </p>
           </div>
           <nav className="flex items-center gap-3 text-sm font-medium">
@@ -19,6 +19,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </Link>
             <Link href="/cases" className="button-secondary">
               Case Library
+            </Link>
+            <Link href="/tasks" className="button-secondary">
+              Task Catalog
+            </Link>
+            <Link href="/exports" className="button-secondary">
+              Export Hub
             </Link>
           </nav>
         </div>

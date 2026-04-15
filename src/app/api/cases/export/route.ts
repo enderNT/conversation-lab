@@ -1,28 +1,29 @@
-import { CaseStatus } from "@prisma/client";
 import { toExportCase } from "@/lib/cases";
 import { prisma } from "@/lib/prisma";
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const projectId = url.searchParams.get("projectId") || undefined;
-  const requestedStatus = url.searchParams.get("status");
-  const status =
-    requestedStatus && Object.values(CaseStatus).includes(requestedStatus as CaseStatus)
-      ? (requestedStatus as CaseStatus)
-      : CaseStatus.approved;
+  const status = url.searchParams.get("status") || undefined;
 
   const cases = await prisma.case.findMany({
     where: {
-      status,
+      ...(status ? { status: status as never } : {}),
       ...(projectId ? { projectId } : {}),
     },
     orderBy: { updatedAt: "desc" },
+    include: {
+      artifacts: true,
+      derivedExamples: {
+        select: { id: true },
+      },
+    },
   });
 
   const payload = cases.map(toExportCase);
   const filename = projectId
-    ? `conversation-lab-${projectId}-${status}-cases.json`
-    : `conversation-lab-${status}-cases.json`;
+    ? `conversation-lab-v2-${projectId}-${status || "all"}-cases.json`
+    : `conversation-lab-v2-${status || "all"}-cases.json`;
 
   return Response.json(payload, {
     headers: {
