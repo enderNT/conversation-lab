@@ -38,7 +38,9 @@ export function useActionFeedbackToast(
       durationMs: 7000,
     });
 
-    if (!state.redirectTo) {
+    const redirectTo = state.redirectTo;
+
+    if (!redirectTo) {
       if (state.shouldRefresh) {
         startTransition(() => {
           router.refresh();
@@ -50,11 +52,11 @@ export function useActionFeedbackToast(
 
     startTransition(() => {
       if (state.navigationMode === "replace") {
-        router.replace(state.redirectTo);
+        router.replace(redirectTo);
         return;
       }
 
-      router.push(state.redirectTo);
+      router.push(redirectTo);
     });
   }, [options.errorTitle, options.successTitle, pushToast, router, state.eventId, state.message, state.navigationMode, state.redirectTo, state.shouldRefresh, state.status]);
 }

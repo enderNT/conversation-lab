@@ -34,7 +34,7 @@ function getOpenAIClient() {
   const configuration = getChatRuntimeConfiguration();
 
   if (!configuration.enabled || !configuration.apiKey) {
-    throw new Error(configuration.disabledReason);
+    throw new Error(configuration.disabledReason ?? "OpenAI runtime is not configured.");
   }
 
   return new OpenAI({
@@ -97,12 +97,26 @@ export async function generateAssistantReply(input: {
   });
 
   const content = response.choices[0]?.message?.content;
+  const contentParts = Array.isArray(content) ? (content as unknown[]) : null;
   const text =
     typeof content === "string"
       ? content.trim()
-      : Array.isArray(content)
-        ? content
-            .flatMap((part) => (part.type === "text" ? [part.text] : []))
+      : contentParts
+        ? contentParts
+            .reduce<string[]>((parts, part) => {
+              if (
+                part &&
+                typeof part === "object" &&
+                "type" in part &&
+                part.type === "text" &&
+                "text" in part &&
+                typeof part.text === "string"
+              ) {
+                parts.push(part.text);
+              }
+
+              return parts;
+            }, [])
             .join("\n")
             .trim()
         : "";
