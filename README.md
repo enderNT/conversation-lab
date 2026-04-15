@@ -95,7 +95,13 @@ Levanta la app con SQLite persistente en volumen:
 docker compose up --build
 ```
 
-Eso ejecuta `prisma db push`, aplica seed idempotente y arranca la app dentro del contenedor. Para que el chat funcione en Docker, exporta `OPENAI_API_KEY` y opcionalmente `OPENAI_MODEL` antes de levantar Compose.
+Eso ejecuta `prisma db push` y arranca la app dentro del contenedor. El seed ya no se ejecuta automáticamente en despliegue. Para que el chat funcione en Docker, exporta `OPENAI_API_KEY` y opcionalmente `OPENAI_MODEL` antes de levantar Compose.
+
+Si quieres cargar datos demo manualmente en local o en un entorno efímero:
+
+```bash
+bun run db:seed
+```
 
 ## Coolify
 
