@@ -792,13 +792,66 @@ export function SessionSelection({
               </div>
             ) : null}
 
-            {!chatEnabled ? (
-              <div className="mb-3 rounded-[1.5rem] border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                {chatAvailabilityMessage}
-              </div>
-            ) : null}
+            <form ref={formRef} onSubmit={handleSubmit} className="rounded-[1.5rem] border border-[var(--line)] bg-white/80 p-2.5 shadow-[0_12px_36px_rgba(15,23,42,0.08)] backdrop-blur">
+              <div className="mb-2 flex items-center justify-between gap-3 px-1">
+                <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-[var(--muted)]">
+                  <span
+                    className={cn(
+                      "h-2.5 w-2.5 shrink-0 rounded-full",
+                      chatEnabled ? "bg-emerald-500" : "bg-amber-500",
+                    )}
+                    aria-hidden="true"
+                  />
+                  <span className="font-medium text-[var(--muted-strong)]">
+                    {chatEnabled ? "Listo para enviar" : connectionSummary}
+                  </span>
+                  {chatEnabled ? (
+                    <span className="text-[var(--muted)]">Enter envía</span>
+                  ) : (
+                    <button
+                      type="button"
+                      className="rounded-full border border-[var(--line)] bg-white/70 px-2.5 py-1 font-semibold text-[var(--foreground)] transition hover:bg-white"
+                      onClick={() => setActivePanel("settings")}
+                    >
+                      Abrir LLM
+                    </button>
+                  )}
+                </div>
 
-            <form ref={formRef} onSubmit={handleSubmit} className="rounded-[1.75rem] border border-[var(--line)] bg-white/80 p-3 shadow-[0_12px_36px_rgba(15,23,42,0.08)] backdrop-blur">
+                <button
+                  type="submit"
+                  className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[var(--accent)] text-white transition hover:bg-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-60"
+                  disabled={
+                    !chatEnabled ||
+                    isSending ||
+                    isClearingChat ||
+                    isDeletingSession ||
+                    draft.trim().length === 0
+                  }
+                  aria-label={isSending ? "Enviando mensaje" : "Enviar mensaje"}
+                  title={isSending ? "Enviando mensaje" : "Enviar mensaje"}
+                >
+                  {isSending ? (
+                    <span className="text-sm font-semibold">...</span>
+                  ) : (
+                    <svg
+                      aria-hidden="true"
+                      viewBox="0 0 20 20"
+                      fill="none"
+                      className="h-4 w-4"
+                    >
+                      <path
+                        d="M10 15V5M10 5L5.75 9.25M10 5l4.25 4.25"
+                        stroke="currentColor"
+                        strokeWidth="1.8"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  )}
+                </button>
+              </div>
+
               <textarea
                 ref={textareaRef}
                 className="min-h-7 w-full resize-none bg-transparent px-2 py-1 text-sm leading-5 text-[var(--foreground)] outline-none placeholder:text-[var(--muted)]"
@@ -814,25 +867,6 @@ export function SessionSelection({
                 required
                 disabled={!chatEnabled || isSending || isClearingChat || isDeletingSession}
               />
-
-              <div className="mt-3 flex flex-col gap-3 border-t border-[var(--line)] px-2 pt-3 sm:flex-row sm:items-end sm:justify-between">
-                <div className="text-sm text-[var(--muted)]">
-                  {chatEnabled ? chatAvailabilityMessage : "Abre la configuración LLM si necesitas ajustar modelo, conexión o prompt de comportamiento."}
-                </div>
-                <button
-                  type="submit"
-                  className="button-primary inline-flex items-center justify-center"
-                  disabled={
-                    !chatEnabled ||
-                    isSending ||
-                    isClearingChat ||
-                    isDeletingSession ||
-                    draft.trim().length === 0
-                  }
-                >
-                  {isSending ? "Enviando..." : "Enviar mensaje"}
-                </button>
-              </div>
             </form>
           </div>
         </footer>
