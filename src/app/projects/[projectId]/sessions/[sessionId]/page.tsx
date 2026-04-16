@@ -12,24 +12,38 @@ export default async function SessionChatPage({
 }) {
   const { projectId, sessionId } = await params;
 
-  const session = await prisma.session.findUnique({
-    where: { id: sessionId },
-    include: {
-      project: true,
-      _count: {
-        select: {
-          cases: true,
+  const [session, projectSessions] = await Promise.all([
+    prisma.session.findUnique({
+      where: { id: sessionId },
+      include: {
+        project: true,
+        _count: {
+          select: {
+            cases: true,
+          },
+        },
+        messages: {
+          orderBy: { orderIndex: "asc" },
+        },
+        cases: {
+          orderBy: { updatedAt: "desc" },
+          take: 6,
         },
       },
-      messages: {
-        orderBy: { orderIndex: "asc" },
+    }),
+    prisma.session.findMany({
+      where: { projectId },
+      orderBy: { createdAt: "desc" },
+      include: {
+        _count: {
+          select: {
+            messages: true,
+            cases: true,
+          },
+        },
       },
-      cases: {
-        orderBy: { updatedAt: "desc" },
-        take: 6,
-      },
-    },
-  });
+    }),
+  ]);
 
   if (!session || session.projectId !== projectId) {
     notFound();
@@ -50,8 +64,14 @@ export default async function SessionChatPage({
           projectId={projectId}
           sessionId={sessionId}
           projectName={session.project.name}
-          sessionTitle={session.title || "Untitled session"}
           sessionCreatedAt={session.createdAt.toISOString()}
+          sessionHistory={projectSessions.map((projectSession) => ({
+            id: projectSession.id,
+            title: projectSession.title || "Chat sin titulo",
+            createdAt: projectSession.createdAt.toISOString(),
+            messageCount: projectSession._count.messages,
+            caseCount: projectSession._count.cases,
+          }))}
           chatRuntimeEnabled={chatRuntime.enabled}
           chatRuntimeDisabledReason={chatRuntime.disabledReason}
           chatProviderLabel={chatRuntime.providerLabel}

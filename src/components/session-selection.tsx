@@ -32,6 +32,14 @@ type SessionCasePreview = {
   updatedAt: string;
 };
 
+type SessionHistoryPreview = {
+  id: string;
+  title: string;
+  createdAt: string;
+  messageCount: number;
+  caseCount: number;
+};
+
 type ConfirmState =
   | {
       action: "clear-chat" | "delete-session";
@@ -46,8 +54,8 @@ type SessionSelectionProps = {
   projectId: string;
   sessionId: string;
   projectName: string;
-  sessionTitle: string;
   sessionCreatedAt: string;
+  sessionHistory: SessionHistoryPreview[];
   messages: SelectableMessage[];
   recentCases: SessionCasePreview[];
   chatModel: string;
@@ -65,21 +73,21 @@ type SessionSelectionProps = {
 export function SessionSelection({
   projectId,
   sessionId,
-  projectName,
-  sessionTitle,
+  projectName = "",
   sessionCreatedAt,
-  messages,
-  recentCases,
-  chatModel,
+  sessionHistory = [],
+  messages = [],
+  recentCases = [],
+  chatModel = "",
   chatRuntimeEnabled,
-  chatRuntimeDisabledReason,
-  chatProviderLabel,
-  chatBaseUrl,
-  chatConnectionCheckedAt,
-  chatConnectionVerifiedAt,
-  chatConnectionError,
-  caseCount,
-  systemPrompt,
+  chatRuntimeDisabledReason = null,
+  chatProviderLabel = "",
+  chatBaseUrl = null,
+  chatConnectionCheckedAt = null,
+  chatConnectionVerifiedAt = null,
+  chatConnectionError = null,
+  caseCount = 0,
+  systemPrompt = "",
 }: SessionSelectionProps) {
   const router = useRouter();
   const { pushToast } = useToast();
@@ -95,8 +103,10 @@ export function SessionSelection({
   const [isClearingChat, setIsClearingChat] = useState(false);
   const [isDeletingSession, setIsDeletingSession] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [activePanel, setActivePanel] = useState<"cases" | "settings" | null>(null);
   const [contextTab, setContextTab] = useState<"selection" | "cases">("selection");
+  const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
   const [confirmState, setConfirmState] = useState<ConfirmState>(null);
   const formRef = useRef<HTMLFormElement>(null);
@@ -121,7 +131,7 @@ export function SessionSelection({
     : [];
 
   const selectionPreview = selectedMessages.slice(0, 6);
-  const hasBlockingOverlay = activePanel !== null || confirmState !== null;
+  const hasBlockingOverlay = historyOpen || activePanel !== null || confirmState !== null;
   const caseHref = selectionRange
     ? `/projects/${projectId}/sessions/${sessionId}/cases/new?start=${selectionRange.start}&end=${selectionRange.end}`
     : "#";
@@ -174,6 +184,17 @@ export function SessionSelection({
         return;
       }
 
+      if (historyOpen) {
+        setHistoryOpen(false);
+        return;
+      }
+
+      if (headerMenuOpen) {
+        setHeaderMenuOpen(false);
+        setToolsOpen(false);
+        return;
+      }
+
       if (toolsOpen) {
         setToolsOpen(false);
       }
@@ -184,10 +205,10 @@ export function SessionSelection({
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [activePanel, confirmState, toolsOpen]);
+  }, [activePanel, confirmState, headerMenuOpen, historyOpen, toolsOpen]);
 
   useEffect(() => {
-    if (!toolsOpen) {
+    if (!headerMenuOpen && !toolsOpen) {
       return;
     }
 
@@ -196,6 +217,7 @@ export function SessionSelection({
         return;
       }
 
+      setHeaderMenuOpen(false);
       setToolsOpen(false);
     };
 
@@ -204,7 +226,7 @@ export function SessionSelection({
     return () => {
       window.removeEventListener("mousedown", handlePointerDown);
     };
-  }, [toolsOpen]);
+  }, [headerMenuOpen, toolsOpen]);
 
   const modelIsDirty = chatModelDraft.trim() !== chatModel.trim();
   const promptIsDirty = systemPromptDraft.trim() !== systemPrompt.trim();
@@ -245,7 +267,22 @@ export function SessionSelection({
 
   function openCasesPanel() {
     setContextTab(selectionRange ? "selection" : "cases");
+    setHistoryOpen(false);
     setActivePanel("cases");
+    setHeaderMenuOpen(false);
+    setToolsOpen(false);
+  }
+
+  function openSettingsPanel() {
+    setHistoryOpen(false);
+    setActivePanel("settings");
+    setHeaderMenuOpen(false);
+    setToolsOpen(false);
+  }
+
+  function openHistoryPanel() {
+    setHistoryOpen(true);
+    setHeaderMenuOpen(false);
     setToolsOpen(false);
   }
 
@@ -530,7 +567,7 @@ export function SessionSelection({
     : chatConnectionError
       ? "Revisar conexión"
       : !chatModelIsConfigured
-        ? "Modelo pendiente"
+        ? "Configuracion pendiente"
         : !chatConnectionVerifiedAt
           ? "Prueba pendiente"
           : modelIsDirty
@@ -543,143 +580,182 @@ export function SessionSelection({
         <div className="absolute inset-x-0 top-0 h-40 bg-[radial-gradient(circle_at_top_right,rgba(15,95,92,0.16),transparent_44%)]" />
 
         <header className="theme-strong-surface relative border-b border-[var(--line)] px-4 py-4 sm:px-6 lg:px-8">
-          <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-            <div className="min-w-0">
+          <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-4">
+            <div className="flex items-center gap-3">
               <Link
                 href={`/projects/${projectId}`}
-                className="text-sm text-[var(--muted)] underline underline-offset-4"
+                className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-[var(--line)] bg-white/65 text-[var(--foreground)] transition hover:bg-white/90"
+                aria-label="Regresar al proyecto"
+                title="Regresar al proyecto"
               >
-                Back to project
+                <svg aria-hidden="true" viewBox="0 0 20 20" fill="none" className="h-5 w-5">
+                  <path
+                    d="M12.75 4.75 7.5 10l5.25 5.25"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
               </Link>
-              <div className="mt-3 flex flex-wrap items-center gap-3">
-                <h1 className="text-2xl font-semibold tracking-tight sm:text-[2rem]">
-                  {sessionTitle}
-                </h1>
-                <StatusPill tone={chatEnabled ? "success" : "warning"} label={connectionSummary} />
-              </div>
-              <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-[var(--muted)]">
+
+              <button
+                type="button"
+                className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-[var(--line)] bg-white/65 text-[var(--foreground)] transition hover:bg-white/90"
+                onClick={openHistoryPanel}
+                aria-expanded={historyOpen}
+                aria-label="Abrir historial de chats"
+                title="Abrir historial de chats"
+              >
+                <svg aria-hidden="true" viewBox="0 0 20 20" fill="none" className="h-5 w-5">
+                  <path
+                    d="M3.75 5h12.5M3.75 10h12.5M3.75 15h12.5"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                  />
+                </svg>
+              </button>
+            </div>
+
+            <div className="min-w-0 place-self-center">
+              <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-center text-sm text-[var(--muted)]">
                 <span>Proyecto: {projectName}</span>
                 <span>{formatDate(sessionCreatedAt)}</span>
                 <span>{messages.length} mensaje(s)</span>
                 <span>{caseCount} caso(s)</span>
-                <span className="break-all">{chatProviderLabel}</span>
               </div>
+
+              {selectionRange ? (
+                <div className="mt-3 flex justify-center">
+                  <button type="button" className="button-secondary" onClick={clearSelection}>
+                    Limpiar selección
+                  </button>
+                </div>
+              ) : null}
             </div>
 
-            <div className="flex flex-wrap items-center justify-start gap-3 xl:justify-end">
-              {selectionRange ? (
+            <div className="flex justify-end">
+              <div ref={toolsRef} className="relative shrink-0">
                 <button
                   type="button"
-                  className="button-secondary"
-                  onClick={clearSelection}
+                  className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-[var(--line)] bg-white/65 text-[var(--foreground)] transition hover:bg-white/90"
+                  onClick={() => {
+                    setHeaderMenuOpen((currentValue) => {
+                      const nextValue = !currentValue;
+
+                      if (!nextValue) {
+                        setToolsOpen(false);
+                      }
+
+                      return nextValue;
+                    });
+                  }}
+                  aria-expanded={headerMenuOpen}
+                  aria-label="Abrir menú del chat"
+                  title="Abrir menú del chat"
                 >
-                  Limpiar selección
-                </button>
-              ) : null}
-
-              <button type="button" className="button-secondary" onClick={openCasesPanel}>
-                Casos y selección
-              </button>
-
-              <button
-                type="button"
-                className="button-secondary"
-                onClick={() => {
-                  setToolsOpen(false);
-                  setActivePanel("settings");
-                }}
-              >
-                Configuración LLM
-              </button>
-
-              <div ref={toolsRef} className="relative">
-                <button
-                  type="button"
-                  className="button-secondary"
-                  onClick={() => setToolsOpen((currentValue) => !currentValue)}
-                  aria-expanded={toolsOpen}
-                >
-                  Herramientas
+                  <svg aria-hidden="true" viewBox="0 0 20 20" fill="currentColor" className="h-5 w-5">
+                    <circle cx="10" cy="4" r="1.6" />
+                    <circle cx="10" cy="10" r="1.6" />
+                    <circle cx="10" cy="16" r="1.6" />
+                  </svg>
                 </button>
 
-                {toolsOpen ? (
+                {headerMenuOpen ? (
                   <div className="theme-drawer absolute right-0 top-[calc(100%+0.75rem)] z-30 w-[calc(100vw-2rem)] max-w-80 rounded-[1.25rem] border border-[var(--line)] p-2">
-                    <div className="rounded-[1rem] px-3 py-2 text-sm text-[var(--muted)]">
-                      Acciones de baja frecuencia para esta sesión.
-                    </div>
                     <button
                       type="button"
-                      className="flex w-full items-center justify-between rounded-[1rem] px-3 py-3 text-left text-sm font-medium transition hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-60"
-                      onClick={() => {
-                        setToolsOpen(false);
-                        setConfirmState({
-                          action: "clear-chat",
-                          title: "Limpiar toda la conversación",
-                          description:
-                            caseCount > 0
-                              ? "Esto eliminará todos los mensajes de esta sesión, pero conservará los casos ya guardados."
-                              : "Esto eliminará todos los mensajes de esta sesión.",
-                          confirmLabel: "Limpiar chat",
-                          tone: "warning",
-                        });
-                      }}
-                      disabled={isClearingChat || isDeletingSession || messages.length === 0}
+                      className="flex w-full items-center justify-between rounded-[1rem] px-3 py-3 text-left text-sm font-medium transition hover:bg-black/5"
+                      onClick={openCasesPanel}
                     >
-                      <span>Limpiar chat</span>
-                      <span className="text-[var(--muted)]">Mantiene la sesión</span>
+                      <span>Casos y selección</span>
+                      <span className="text-[var(--muted)]">Abrir panel</span>
                     </button>
-                    <Link
-                      href={caseLibraryHref}
-                      className="flex items-center justify-between rounded-[1rem] px-3 py-3 text-sm font-medium transition hover:bg-black/5"
-                      onClick={() => setToolsOpen(false)}
-                    >
-                      <span>Biblioteca de casos</span>
-                      <span className="text-[var(--muted)]">Abrir</span>
-                    </Link>
                     <button
                       type="button"
-                      className="mt-1 flex w-full items-center justify-between rounded-[1rem] bg-rose-600 px-3 py-3 text-left text-sm font-semibold text-white transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
-                      onClick={() => {
-                        setToolsOpen(false);
-                        setConfirmState({
-                          action: "delete-session",
-                          title: "Eliminar chat por completo",
-                          description:
-                            caseCount > 0
-                              ? `Esto eliminará la sesión completa junto con ${caseCount} caso(s) asociado(s). Esta acción no se puede deshacer.`
-                              : "Esto eliminará la sesión completa. Esta acción no se puede deshacer.",
-                          confirmLabel: "Eliminar chat",
-                          tone: "danger",
-                        });
-                      }}
-                      disabled={isDeletingSession || isClearingChat}
+                      className="mt-1 flex w-full items-center justify-between rounded-[1rem] px-3 py-3 text-left text-sm font-medium transition hover:bg-black/5"
+                      onClick={openSettingsPanel}
                     >
-                      <span>Eliminar chat</span>
-                      <span className="text-rose-100">Permanente</span>
+                      <span>Configuración LLM</span>
+                      <span className="text-[var(--muted)]">Abrir modal</span>
                     </button>
+                    <button
+                      type="button"
+                      className="mt-1 flex w-full items-center justify-between rounded-[1rem] px-3 py-3 text-left text-sm font-medium transition hover:bg-black/5"
+                      onClick={() => setToolsOpen((currentValue) => !currentValue)}
+                      aria-expanded={toolsOpen}
+                    >
+                      <span>Herramientas</span>
+                      <span className="text-[var(--muted)]">{toolsOpen ? "Ocultar" : "Ver"}</span>
+                    </button>
+
+                    {toolsOpen ? (
+                      <div className="mt-2 border-t border-[var(--line)] pt-2">
+                        <div className="rounded-[1rem] px-3 py-2 text-sm text-[var(--muted)]">
+                          Acciones de baja frecuencia para esta sesión.
+                        </div>
+                        <button
+                          type="button"
+                          className="flex w-full items-center justify-between rounded-[1rem] px-3 py-3 text-left text-sm font-medium transition hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-60"
+                          onClick={() => {
+                            setHeaderMenuOpen(false);
+                            setToolsOpen(false);
+                            setConfirmState({
+                              action: "clear-chat",
+                              title: "Limpiar toda la conversación",
+                              description:
+                                caseCount > 0
+                                  ? "Esto eliminará todos los mensajes de esta sesión, pero conservará los casos ya guardados."
+                                  : "Esto eliminará todos los mensajes de esta sesión.",
+                              confirmLabel: "Limpiar chat",
+                              tone: "warning",
+                            });
+                          }}
+                          disabled={isClearingChat || isDeletingSession || messages.length === 0}
+                        >
+                          <span>Limpiar chat</span>
+                          <span className="text-[var(--muted)]">Mantiene la sesión</span>
+                        </button>
+                        <Link
+                          href={caseLibraryHref}
+                          className="flex items-center justify-between rounded-[1rem] px-3 py-3 text-sm font-medium transition hover:bg-black/5"
+                          onClick={() => {
+                            setHeaderMenuOpen(false);
+                            setToolsOpen(false);
+                          }}
+                        >
+                          <span>Biblioteca de casos</span>
+                          <span className="text-[var(--muted)]">Abrir</span>
+                        </Link>
+                        <button
+                          type="button"
+                          className="mt-1 flex w-full items-center justify-between rounded-[1rem] bg-rose-600 px-3 py-3 text-left text-sm font-semibold text-white transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
+                          onClick={() => {
+                            setHeaderMenuOpen(false);
+                            setToolsOpen(false);
+                            setConfirmState({
+                              action: "delete-session",
+                              title: "Eliminar chat por completo",
+                              description:
+                                caseCount > 0
+                                  ? `Esto eliminará la sesión completa junto con ${caseCount} caso(s) asociado(s). Esta acción no se puede deshacer.`
+                                  : "Esto eliminará la sesión completa. Esta acción no se puede deshacer.",
+                              confirmLabel: "Eliminar chat",
+                              tone: "danger",
+                            });
+                          }}
+                          disabled={isDeletingSession || isClearingChat}
+                        >
+                          <span>Eliminar chat</span>
+                          <span className="text-rose-100">Permanente</span>
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
                 ) : null}
               </div>
             </div>
-          </div>
-
-          <div className="mt-4 flex flex-wrap items-center gap-3">
-            <MetricChip label="Modelo" value={chatModel || "Sin definir"} />
-            <MetricChip label="Conexión" value={chatConnectionVerifiedAt ? "Verificada" : "Pendiente"} />
-            <MetricChip label="Base URL" value={chatBaseUrl || "https://api.openai.com/v1"} truncate />
-            {selectionRange ? (
-              <button
-                type="button"
-                className="rounded-full border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-900 transition hover:bg-amber-100"
-                onClick={openCasesPanel}
-              >
-                Turnos {selectionRange.start + 1} a {selectionRange.end + 1} seleccionados
-              </button>
-            ) : (
-              <span className="rounded-full border border-[var(--line)] bg-white/65 px-4 py-2 text-sm text-[var(--muted)]">
-                Selecciona mensajes directamente en el transcript para crear un caso.
-              </span>
-            )}
           </div>
         </header>
 
@@ -805,13 +881,16 @@ export function SessionSelection({
                   <span className="font-medium text-[var(--muted-strong)]">
                     {chatEnabled ? "Listo para enviar" : connectionSummary}
                   </span>
+                  <span className="rounded-full border border-[var(--line)] bg-white/70 px-2 py-1 font-medium text-[var(--foreground)]">
+                    Conexión: {chatConnectionVerifiedAt ? "Verificada" : "Pendiente"}
+                  </span>
                   {chatEnabled ? (
                     <span className="text-[var(--muted)]">Enter envía</span>
                   ) : (
                     <button
                       type="button"
                       className="rounded-full border border-[var(--line)] bg-white/70 px-2.5 py-1 font-semibold text-[var(--foreground)] transition hover:bg-white"
-                      onClick={() => setActivePanel("settings")}
+                      onClick={openSettingsPanel}
                     >
                       Abrir LLM
                     </button>
@@ -871,6 +950,86 @@ export function SessionSelection({
           </div>
         </footer>
       </section>
+
+      <ChatHistoryDrawer
+        open={historyOpen}
+        title="Historial de chats"
+        description="Cambia entre sesiones del proyecto sin salir de esta vista."
+        onClose={() => setHistoryOpen(false)}
+      >
+        <div className="space-y-5">
+          <div className="rounded-[1.5rem] border border-[var(--line)] bg-white/65 p-4">
+            <p className="text-xs uppercase tracking-[0.18em] text-[var(--muted)]">Proyecto</p>
+            <h2 className="mt-2 text-xl font-semibold text-[var(--foreground)]">{projectName}</h2>
+            <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
+              {sessionHistory.length} chat(s) disponible(s) en este proyecto.
+            </p>
+          </div>
+
+          {sessionHistory.length === 0 ? (
+            <div className="rounded-[1.5rem] border border-dashed border-[var(--line)] px-4 py-6 text-sm text-[var(--muted)]">
+              Todavía no hay otros chats para mostrar.
+            </div>
+          ) : null}
+
+          <div className="space-y-3">
+            {sessionHistory.map((historyItem) => {
+              const isCurrentSession = historyItem.id === sessionId;
+              const historyItemContent = (
+                <>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-[var(--foreground)]">
+                        {historyItem.title}
+                      </p>
+                      <p className="mt-1 text-xs text-[var(--muted)]">
+                        {formatDate(historyItem.createdAt)}
+                      </p>
+                    </div>
+
+                    {isCurrentSession ? (
+                      <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-900">
+                        Actual
+                      </span>
+                    ) : null}
+                  </div>
+
+                  <div className="mt-3 flex flex-wrap gap-2 text-xs text-[var(--muted)]">
+                    <span className="rounded-full border border-[var(--line)] bg-white/80 px-2.5 py-1">
+                      {historyItem.messageCount} mensaje(s)
+                    </span>
+                    <span className="rounded-full border border-[var(--line)] bg-white/80 px-2.5 py-1">
+                      {historyItem.caseCount} caso(s)
+                    </span>
+                  </div>
+                </>
+              );
+
+              if (isCurrentSession) {
+                return (
+                  <article
+                    key={historyItem.id}
+                    className="rounded-[1.5rem] border border-emerald-200 bg-emerald-50/80 p-4"
+                  >
+                    {historyItemContent}
+                  </article>
+                );
+              }
+
+              return (
+                <Link
+                  key={historyItem.id}
+                  href={`/projects/${projectId}/sessions/${historyItem.id}`}
+                  className="block rounded-[1.5rem] border border-[var(--line)] bg-white/70 p-4 transition hover:-translate-y-0.5 hover:border-[var(--accent)] hover:shadow-[0_12px_30px_rgba(15,23,42,0.08)]"
+                  onClick={() => setHistoryOpen(false)}
+                >
+                  {historyItemContent}
+                </Link>
+              );
+            })}
+          </div>
+        </div>
+      </ChatHistoryDrawer>
 
       <SideDrawer
         open={activePanel === "cases"}
@@ -1139,28 +1298,6 @@ export function SessionSelection({
   );
 }
 
-function MetricChip({
-  label,
-  value,
-  truncate = false,
-}: {
-  label: string;
-  value: string;
-  truncate?: boolean;
-}) {
-  return (
-    <span
-      className={cn(
-        "inline-flex max-w-full items-center gap-2 rounded-full border border-[var(--line)] bg-white/65 px-4 py-2 text-sm text-[var(--muted)]",
-        truncate ? "min-w-0" : "",
-      )}
-    >
-      <span className="font-semibold text-[var(--foreground)]">{label}:</span>
-      <span className={cn(truncate ? "truncate" : "")}>{value}</span>
-    </span>
-  );
-}
-
 function InfoCard({
   label,
   value,
@@ -1177,27 +1314,6 @@ function InfoCard({
         {value}
       </p>
     </div>
-  );
-}
-
-function StatusPill({
-  tone,
-  label,
-}: {
-  tone: "success" | "warning";
-  label: string;
-}) {
-  return (
-    <span
-      className={cn(
-        "inline-flex rounded-full px-3 py-1.5 text-sm font-semibold",
-        tone === "success"
-          ? "border border-emerald-200 bg-emerald-50 text-emerald-900"
-          : "border border-amber-200 bg-amber-50 text-amber-900",
-      )}
-    >
-      {label}
-    </span>
   );
 }
 
@@ -1270,6 +1386,49 @@ function SideDrawer({
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6">{children}</div>
       </div>
+    </div>
+  );
+}
+
+function ChatHistoryDrawer({
+  open,
+  title,
+  description,
+  onClose,
+  children,
+}: {
+  open: boolean;
+  title: string;
+  description: string;
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
+  if (!open) {
+    return null;
+  }
+
+  return (
+    <div className="theme-overlay fixed inset-0 z-50 flex items-stretch justify-start backdrop-blur-[1px]">
+      <div className="theme-drawer relative flex h-full w-full max-w-full flex-col border-r border-[var(--line)] sm:max-w-[28rem]">
+        <div className="border-b border-[var(--line)] px-5 py-4 sm:px-6">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--muted)]">
+                Sidebar izquierdo
+              </p>
+              <h2 className="mt-2 text-2xl font-semibold tracking-tight text-[var(--foreground)]">
+                {title}
+              </h2>
+              <p className="mt-1 text-sm leading-6 text-[var(--muted)]">{description}</p>
+            </div>
+            <button type="button" className="button-secondary" onClick={onClose}>
+              Cerrar
+            </button>
+          </div>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6">{children}</div>
+      </div>
+      <button type="button" aria-label="Cerrar historial" className="flex-1" onClick={onClose} />
     </div>
   );
 }
