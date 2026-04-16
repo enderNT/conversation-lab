@@ -17,6 +17,8 @@ ENV PORT=3000
 
 COPY --from=builder /app /app
 
+RUN mkdir -p /app/data && chmod +x /app/scripts/start-container.sh
+
 EXPOSE 3000
 
-CMD ["bun", "run", "start"]
+CMD ["/app/scripts/start-container.sh"]

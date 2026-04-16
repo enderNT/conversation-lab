@@ -3,5 +3,8 @@
 .next
 node_modules
 prisma/dev.db
+dev.db
+*.db-shm
+*.db-wal
 coverage
 .DS_Store

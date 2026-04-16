@@ -114,6 +114,8 @@ docker compose up --build
 
 Eso ejecuta `prisma db push` y arranca la app dentro del contenedor. El seed ya no se ejecuta automáticamente en despliegue. Para que el chat funcione en Docker, exporta `OPENAI_API_KEY` si tu proveedor lo requiere, y si usas un backend OpenAI-compatible añade `OPENAI_COMPATIBLE=true` junto con `OPENAI_BASE_URL` antes de levantar Compose. El modelo se configura luego desde la UI de cada sesión.
 
+El arranque del contenedor normaliza cualquier `DATABASE_URL` SQLite relativa como `file:./dev.db` o `file:"./dev.db"` hacia `file:/app/data/<archivo>.db` dentro del volumen persistente. Eso evita perder datos en Coolify por una ruta relativa que terminaría escribiendo en el filesystem efímero del contenedor.
+
 Si quieres cargar datos demo manualmente en local o en un entorno efímero:
 
 ```bash
@@ -138,6 +140,13 @@ Esta app está preparada para desplegarse en Coolify sin publicar un puerto host
 5. Ese `:3000` no significa que el usuario final vaya a navegar a `:3000`; solo le dice a Coolify a qué puerto interno del contenedor debe enviar el tráfico del proxy.
 6. En variables de entorno de Coolify completa `OPENAI_API_KEY` solo si tu proveedor lo requiere. `DATABASE_URL` puede quedar con su valor por defecto `file:/app/data/dev.db`. Si usas un proveedor OpenAI-compatible, añade también `OPENAI_COMPATIBLE=true` y `OPENAI_BASE_URL`. El modelo se define desde la UI de cada sesión.
 7. Despliega. Coolify publicará la app en el dominio normal (`https://lab.tudominio.com`) aunque internamente la app siga escuchando en `3000`.
+
+### Persistencia de SQLite en Coolify
+
+- El volumen persistente del servicio se monta en `/app/data`.
+- Usa `DATABASE_URL=file:/app/data/dev.db` como valor recomendado en Coolify.
+- Si por error de configuración llega una ruta relativa como `file:./dev.db`, el contenedor la corrige al arrancar para que siga escribiendo dentro del volumen persistente y no se pierdan datos en el redeploy.
+- No montes la base SQLite dentro del directorio de la app (`/app/dev.db`) porque ese filesystem se reconstruye en cada despliegue.
 
 ### Cuándo usar `ports:`
 
