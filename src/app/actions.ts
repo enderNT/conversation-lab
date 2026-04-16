@@ -23,7 +23,7 @@ import {
   toConversationSlice,
   validateDerivedExample,
 } from "@/lib/cases";
-import { generateAssistantReply } from "@/lib/openai";
+import { generateAssistantReply, testChatConnection as testOpenAIChatConnection } from "@/lib/openai";
 import type { ActionFormState } from "@/lib/form-state";
 import { prisma } from "@/lib/prisma";
 import { ARTIFACT_TYPES, TASK_TYPES } from "@/lib/types";
@@ -44,6 +44,10 @@ const chatTurnSchema = z.object({
 
 const sessionPromptSchema = z.object({
   systemPrompt: z.string().default(""),
+});
+
+const sessionChatSettingsSchema = z.object({
+  chatModel: z.string().trim().default(""),
 });
 
 const caseSchema = z.object({
@@ -345,6 +349,8 @@ export async function sendSessionMessage(
       id: true,
       projectId: true,
       systemPrompt: true,
+      chatModel: true,
+      chatConnectionVerifiedAt: true,
       messages: {
         orderBy: { orderIndex: "asc" },
         select: {
@@ -362,8 +368,23 @@ export async function sendSessionMessage(
     };
   }
 
+  if (!session.chatModel?.trim()) {
+    return {
+      ok: false as const,
+      error: "Define un modelo y prueba la conexión antes de usar el chat.",
+    };
+  }
+
+  if (!session.chatConnectionVerifiedAt) {
+    return {
+      ok: false as const,
+      error: "La conexión del chat todavía no fue verificada para este modelo.",
+    };
+  }
+
   try {
     const assistantReply = await generateAssistantReply({
+      model: session.chatModel,
       systemPrompt: session.systemPrompt,
       messages: [
         ...session.messages.map((message) => ({
@@ -405,7 +426,7 @@ export async function sendSessionMessage(
           text: assistantReply.text,
           orderIndex: nextOrderIndex + 1,
           metadataJson: {
-            source: "openai",
+            source: "openai_compatible",
             model: assistantReply.model,
             response_id: assistantReply.responseId,
           },
@@ -429,6 +450,145 @@ export async function sendSessionMessage(
   return {
     ok: true as const,
   };
+}
+
+export async function updateSessionChatModel(
+  projectId: string,
+  sessionId: string,
+  input: { chatModel: string },
+) {
+  const parsed = sessionChatSettingsSchema.parse({
+    chatModel: input.chatModel,
+  });
+
+  const session = await prisma.session.findUnique({
+    where: { id: sessionId },
+    select: {
+      id: true,
+      projectId: true,
+    },
+  });
+
+  if (!session || session.projectId !== projectId) {
+    return {
+      ok: false as const,
+      error: "La sesión no existe o no pertenece al proyecto indicado.",
+    };
+  }
+
+  try {
+    const normalizedModel = parsed.chatModel.trim();
+
+    await prisma.session.update({
+      where: { id: sessionId },
+      data: {
+        chatModel: normalizedModel || null,
+        chatConnectionCheckedAt: null,
+        chatConnectionVerifiedAt: null,
+        chatConnectionError: null,
+      },
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : "No fue posible guardar el modelo del chat.";
+
+    return {
+      ok: false as const,
+      error: message,
+    };
+  }
+
+  revalidatePath(`/projects/${projectId}/sessions/${sessionId}`);
+
+  return {
+    ok: true as const,
+  };
+}
+
+export async function verifySessionChatConnection(
+  projectId: string,
+  sessionId: string,
+  input: { chatModel: string },
+) {
+  const parsed = sessionChatSettingsSchema.parse({
+    chatModel: input.chatModel,
+  });
+
+  const session = await prisma.session.findUnique({
+    where: { id: sessionId },
+    select: {
+      id: true,
+      projectId: true,
+    },
+  });
+
+  if (!session || session.projectId !== projectId) {
+    return {
+      ok: false as const,
+      error: "La sesión no existe o no pertenece al proyecto indicado.",
+    };
+  }
+
+  const normalizedModel = parsed.chatModel.trim();
+
+  if (!normalizedModel) {
+    return {
+      ok: false as const,
+      error: "Define un modelo antes de probar la conexión.",
+    };
+  }
+
+  const checkedAt = new Date();
+
+  try {
+    const result = await testOpenAIChatConnection({
+      model: normalizedModel,
+    });
+
+    await prisma.session.update({
+      where: { id: sessionId },
+      data: {
+        chatModel: normalizedModel,
+        chatConnectionCheckedAt: checkedAt,
+        chatConnectionVerifiedAt: checkedAt,
+        chatConnectionError: null,
+      },
+    });
+
+    revalidatePath(`/projects/${projectId}/sessions/${sessionId}`);
+
+    return {
+      ok: true as const,
+      message:
+        result.listedModels.length > 0
+          ? `Conexión verificada. El modelo \"${normalizedModel}\" está disponible.`
+          : `Conexión verificada para el modelo \"${normalizedModel}\".`,
+    };
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : "No fue posible verificar la conexión con el proveedor del chat.";
+
+    await prisma.session.update({
+      where: { id: sessionId },
+      data: {
+        chatModel: normalizedModel,
+        chatConnectionCheckedAt: checkedAt,
+        chatConnectionVerifiedAt: null,
+        chatConnectionError: message,
+      },
+    });
+
+    revalidatePath(`/projects/${projectId}/sessions/${sessionId}`);
+
+    return {
+      ok: false as const,
+      error: message,
+    };
+  }
 }
 
 export async function updateSessionSystemPrompt(

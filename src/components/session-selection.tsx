@@ -3,7 +3,12 @@
 import Link from "next/link";
 import { useEffect, useRef, useState, startTransition } from "react";
 import { useRouter } from "next/navigation";
-import { sendSessionMessage, updateSessionSystemPrompt } from "@/app/actions";
+import {
+  sendSessionMessage,
+  updateSessionChatModel,
+  updateSessionSystemPrompt,
+  verifySessionChatConnection,
+} from "@/app/actions";
 import { FormLabel } from "@/components/form-label";
 import { useToast } from "@/components/toast-provider";
 import { cn, formatDate } from "@/lib/utils";
@@ -21,9 +26,13 @@ type SessionSelectionProps = {
   sessionId: string;
   messages: SelectableMessage[];
   chatModel: string;
-  chatEnabled: boolean;
+  chatRuntimeEnabled: boolean;
+  chatRuntimeDisabledReason: string | null;
   chatProviderLabel: string;
   chatBaseUrl: string | null;
+  chatConnectionCheckedAt: string | null;
+  chatConnectionVerifiedAt: string | null;
+  chatConnectionError: string | null;
   systemPrompt: string;
 };
 
@@ -32,17 +41,24 @@ export function SessionSelection({
   sessionId,
   messages,
   chatModel,
-  chatEnabled,
+  chatRuntimeEnabled,
+  chatRuntimeDisabledReason,
   chatProviderLabel,
   chatBaseUrl,
+  chatConnectionCheckedAt,
+  chatConnectionVerifiedAt,
+  chatConnectionError,
   systemPrompt,
 }: SessionSelectionProps) {
   const router = useRouter();
   const [anchorIndex, setAnchorIndex] = useState<number | null>(null);
   const [focusIndex, setFocusIndex] = useState<number | null>(null);
   const [draft, setDraft] = useState("");
+  const [chatModelDraft, setChatModelDraft] = useState(chatModel);
   const [systemPromptDraft, setSystemPromptDraft] = useState(systemPrompt);
   const [isSending, setIsSending] = useState(false);
+  const [isSavingModel, setIsSavingModel] = useState(false);
+  const [isTestingConnection, setIsTestingConnection] = useState(false);
   const [isSavingPrompt, setIsSavingPrompt] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
@@ -81,8 +97,33 @@ export function SessionSelection({
   }, [messages.length]);
 
   useEffect(() => {
+    setChatModelDraft(chatModel);
+  }, [chatModel]);
+
+  useEffect(() => {
     setSystemPromptDraft(systemPrompt);
   }, [systemPrompt]);
+
+  const modelIsDirty = chatModelDraft.trim() !== chatModel.trim();
+  const chatModelIsConfigured = chatModel.trim().length > 0;
+  const chatConnectionIsVerified = Boolean(chatConnectionVerifiedAt) && !chatConnectionError;
+  const chatEnabled =
+    chatRuntimeEnabled &&
+    chatModelIsConfigured &&
+    chatConnectionIsVerified &&
+    !modelIsDirty;
+
+  const chatAvailabilityMessage = !chatRuntimeEnabled
+    ? chatRuntimeDisabledReason || "La configuración del proveedor no es válida."
+    : modelIsDirty
+      ? "Guarda o vuelve a probar el modelo antes de enviar mensajes."
+      : !chatModelIsConfigured
+        ? "Define un modelo para esta sesión antes de habilitar el chat."
+        : chatConnectionError
+          ? "La última prueba de conexión falló. Corrige el modelo o el backend y vuelve a probar."
+          : !chatConnectionVerifiedAt
+            ? "Prueba la conexión del modelo antes de usar el chat."
+            : "Enter envía. Shift+Enter agrega una nueva línea.";
 
   function handleSelect(orderIndex: number) {
     if (anchorIndex === null) {
@@ -141,6 +182,96 @@ export function SessionSelection({
       });
     } finally {
       setIsSending(false);
+    }
+  }
+
+  async function handleSaveChatModel() {
+    if (isSavingModel) {
+      return;
+    }
+
+    setIsSavingModel(true);
+
+    try {
+      const result = await updateSessionChatModel(projectId, sessionId, {
+        chatModel: chatModelDraft,
+      });
+
+      if (!result.ok) {
+        pushToast({
+          title: "No fue posible guardar el modelo",
+          description: result.error,
+          variant: "error",
+          durationMs: 7000,
+        });
+        return;
+      }
+
+      pushToast({
+        title: chatModelDraft.trim() ? "Modelo guardado" : "Modelo eliminado",
+        description: chatModelDraft.trim()
+          ? "La sesión guardó el modelo y dejó pendiente una nueva verificación de conexión."
+          : "La sesión quedó sin modelo configurado.",
+        variant: "success",
+        durationMs: 7000,
+      });
+
+      startTransition(() => {
+        router.refresh();
+      });
+    } catch {
+      pushToast({
+        title: "No fue posible guardar el modelo",
+        description: "No fue posible actualizar el modelo configurado para esta sesión.",
+        variant: "error",
+        durationMs: 7000,
+      });
+    } finally {
+      setIsSavingModel(false);
+    }
+  }
+
+  async function handleVerifyConnection() {
+    if (isTestingConnection) {
+      return;
+    }
+
+    setIsTestingConnection(true);
+
+    try {
+      const result = await verifySessionChatConnection(projectId, sessionId, {
+        chatModel: chatModelDraft,
+      });
+
+      if (!result.ok) {
+        pushToast({
+          title: "Conexión no verificada",
+          description: result.error,
+          variant: "error",
+          durationMs: 8000,
+        });
+        return;
+      }
+
+      pushToast({
+        title: "Conexión verificada",
+        description: result.message,
+        variant: "success",
+        durationMs: 7000,
+      });
+
+      startTransition(() => {
+        router.refresh();
+      });
+    } catch {
+      pushToast({
+        title: "Conexión no verificada",
+        description: "No fue posible comprobar la conexión con el proveedor del chat.",
+        variant: "error",
+        durationMs: 8000,
+      });
+    } finally {
+      setIsTestingConnection(false);
     }
   }
 
@@ -208,11 +339,78 @@ export function SessionSelection({
 
             <div className="rounded-[1.25rem] border border-[var(--line)] bg-white/65 px-4 py-3 text-sm text-[var(--muted)]">
               <p>Proveedor: {chatProviderLabel}</p>
-              <p className="mt-1">Modelo: {chatModel}</p>
+              <p className="mt-1">Modelo guardado: {chatModel || "Sin definir"}</p>
               <p className="mt-1 break-all">
                 Base URL: {chatBaseUrl || "https://api.openai.com/v1"}
               </p>
             </div>
+          </div>
+
+          <label className="mt-5 block space-y-2">
+            <FormLabel>Chat model</FormLabel>
+            <input
+              className="field"
+              value={chatModelDraft}
+              onChange={(event) => setChatModelDraft(event.target.value)}
+              placeholder="Ejemplo: gpt-5-mini o el identificador expuesto por tu backend"
+              disabled={isSavingModel || isTestingConnection}
+            />
+          </label>
+
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+            <div className="text-sm text-[var(--muted)]">
+              {chatConnectionVerifiedAt ? (
+                <p>Conexión verificada: {formatDate(chatConnectionVerifiedAt)}</p>
+              ) : chatConnectionCheckedAt ? (
+                <p>Última prueba: {formatDate(chatConnectionCheckedAt)}</p>
+              ) : (
+                <p>Esta sesión todavía no verificó la conexión del chat.</p>
+              )}
+              {chatConnectionError ? (
+                <p className="mt-1 text-rose-700">{chatConnectionError}</p>
+              ) : null}
+            </div>
+
+            <div className="flex flex-wrap gap-3">
+              <button
+                type="button"
+                className="button-secondary"
+                onClick={() => {
+                  void handleSaveChatModel();
+                }}
+                disabled={isSavingModel || isTestingConnection || !modelIsDirty}
+              >
+                {isSavingModel ? "Saving model..." : "Save model"}
+              </button>
+              <button
+                type="button"
+                className="button-primary"
+                onClick={() => {
+                  void handleVerifyConnection();
+                }}
+                disabled={
+                  isSavingModel ||
+                  isTestingConnection ||
+                  !chatRuntimeEnabled ||
+                  chatModelDraft.trim().length === 0
+                }
+              >
+                {isTestingConnection ? "Testing..." : "Test connection"}
+              </button>
+            </div>
+          </div>
+
+          <div
+            className={cn(
+              "mt-4 rounded-[1.25rem] border px-4 py-3 text-sm",
+              chatEnabled
+                ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+                : "border-amber-200 bg-amber-50 text-amber-900",
+            )}
+          >
+            {chatEnabled
+              ? "El chat está habilitado para este modelo verificado."
+              : chatAvailabilityMessage}
           </div>
 
           <label className="mt-5 block space-y-2">
@@ -263,9 +461,7 @@ export function SessionSelection({
 
           <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
             <p className="text-sm text-[var(--muted)]">
-              {chatEnabled
-                ? "Enter envía. Shift+Enter agrega una nueva línea."
-                : "Completa la configuración del proveedor en variables de entorno para habilitar el chat."}
+              {chatAvailabilityMessage}
             </p>
             <button
               type="submit"

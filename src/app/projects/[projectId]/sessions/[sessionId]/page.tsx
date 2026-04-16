@@ -70,10 +70,14 @@ export default async function SessionChatPage({
         <SessionSelection
           projectId={projectId}
           sessionId={sessionId}
-          chatEnabled={chatRuntime.enabled}
-          chatModel={chatRuntime.model}
+          chatRuntimeEnabled={chatRuntime.enabled}
+          chatRuntimeDisabledReason={chatRuntime.disabledReason}
           chatProviderLabel={chatRuntime.providerLabel}
           chatBaseUrl={chatRuntime.baseUrl}
+          chatModel={session.chatModel || ""}
+          chatConnectionCheckedAt={session.chatConnectionCheckedAt?.toISOString() ?? null}
+          chatConnectionVerifiedAt={session.chatConnectionVerifiedAt?.toISOString() ?? null}
+          chatConnectionError={session.chatConnectionError}
           systemPrompt={session.systemPrompt || ""}
           messages={session.messages.map((message) => ({
             id: message.id,
