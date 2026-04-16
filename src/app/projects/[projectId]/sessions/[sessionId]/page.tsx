@@ -118,7 +118,7 @@ export default async function SessionChatPage({
                 </div>
                 <StatusBadge status={caseItem.status} />
               </div>
-              <p className="mt-4 line-clamp-3 text-sm leading-7 text-slate-700">
+              <p className="mt-4 line-clamp-3 text-sm leading-7 text-[var(--muted-strong)]">
                 {caseItem.lastUserMessage}
               </p>
               <Link href={`/cases/${caseItem.id}`} className="button-primary mt-5 inline-flex">

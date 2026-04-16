@@ -20,6 +20,24 @@ export const metadata: Metadata = {
     "MVP para conversar con un LLM, revisar slices consecutivos y exportar casos intermedios.",
 };
 
+const themeInitScript = `
+  (() => {
+    try {
+      const storedTheme = window.localStorage.getItem("conversation-lab-theme");
+      const resolvedTheme =
+        storedTheme === "dark" || storedTheme === "light"
+          ? storedTheme
+          : window.matchMedia("(prefers-color-scheme: dark)").matches
+            ? "dark"
+            : "light";
+
+      document.documentElement.dataset.theme = resolvedTheme;
+    } catch {
+      document.documentElement.dataset.theme = "light";
+    }
+  })();
+`;
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -29,8 +47,10 @@ export default function RootLayout({
     <html
       lang="es"
       className={`${headingFont.variable} ${monoFont.variable} h-full antialiased`}
+      suppressHydrationWarning
     >
       <body className="min-h-full">
+        <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
         <AppShell>{children}</AppShell>
       </body>
     </html>

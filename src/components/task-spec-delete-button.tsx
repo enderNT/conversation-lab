@@ -31,7 +31,7 @@ export function TaskSpecDeleteButton({
         }
       }}
     >
-      <button type="submit" className="button-secondary text-rose-700">
+      <button type="submit" className="button-danger">
         Delete
       </button>
     </form>

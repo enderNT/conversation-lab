@@ -56,7 +56,7 @@ function ToastCard({
         : "border-rose-200 bg-rose-50 text-rose-950";
 
   return (
-    <div className={cn("rounded-[1.4rem] border p-4 shadow-[0_18px_40px_rgba(24,35,47,0.16)]", toneClassName)}>
+    <div className={cn("rounded-[1.4rem] border p-4 shadow-[var(--toast-shadow)]", toneClassName)}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <p className="text-sm font-semibold">{toast.title}</p>

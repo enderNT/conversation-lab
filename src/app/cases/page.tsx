@@ -195,7 +195,7 @@ export default async function CasesPage({
                     {caseItem.project.name} • {caseItem.session.title || "Untitled session"} • Updated {formatDate(caseItem.updatedAt)}
                   </p>
 
-                  <p className="mt-4 line-clamp-3 text-sm leading-7 text-slate-700">
+                  <p className="mt-4 line-clamp-3 text-sm leading-7 text-[var(--muted-strong)]">
                     {caseItem.sourceSummary || caseItem.lastUserMessage}
                   </p>
 

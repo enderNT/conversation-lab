@@ -25,7 +25,7 @@ export default async function ProjectsPage() {
           <p className="text-sm uppercase tracking-[0.22em] text-[var(--muted)]">
             Projects
           </p>
-          <h1 className="mt-3 max-w-2xl text-4xl font-semibold tracking-tight text-slate-900">
+          <h1 className="mt-3 max-w-2xl text-4xl font-semibold tracking-tight text-[var(--foreground)]">
             Conversa con un LLM, conserva los mejores fragmentos y conviértelos en casos revisados.
           </h1>
           <p className="mt-4 max-w-2xl text-base leading-8 text-[var(--muted)]">
@@ -47,7 +47,7 @@ export default async function ProjectsPage() {
           <article key={project.id} className="surface rounded-[1.75rem] p-5 sm:p-6">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <h2 className="text-xl font-semibold text-slate-900">{project.name}</h2>
+                <h2 className="text-xl font-semibold text-[var(--foreground)]">{project.name}</h2>
                 <p className="mt-2 text-sm leading-7 text-[var(--muted)]">
                   {project.description || "Sin descripción aún."}
                 </p>

@@ -5,12 +5,61 @@
   --foreground: #18232f;
   --card: rgba(255, 253, 249, 0.86);
   --muted: #66727d;
+  --muted-strong: #47525d;
   --line: rgba(24, 35, 47, 0.1);
   --accent: #0f5f5c;
   --accent-strong: #0b4c49;
+  --danger-background: rgba(244, 63, 94, 0.08);
+  --danger-border: rgba(190, 24, 93, 0.18);
+  --danger-text: #be185d;
   --user-bubble: #fffaf1;
   --assistant-bubble: #eef6f5;
   --selection: #f7e3b3;
+  --background-glow: rgba(15, 95, 92, 0.08);
+  --background-gradient-start: #f6f2eb;
+  --background-gradient-end: #f0ebe2;
+  --header-background: rgba(246, 241, 232, 0.82);
+  --field-background: rgba(255, 255, 255, 0.78);
+  --button-secondary-background: rgba(255, 255, 255, 0.82);
+  --button-secondary-hover: rgba(255, 255, 255, 0.94);
+  --surface-soft: rgba(255, 255, 255, 0.7);
+  --surface-strong: rgba(255, 255, 255, 0.84);
+  --drawer-background: rgba(248, 246, 241, 0.98);
+  --overlay-background: rgba(17, 24, 39, 0.34);
+  --shadow-soft: 0 10px 28px rgba(24, 35, 47, 0.06);
+  --shadow-strong: 0 18px 48px rgba(15, 23, 42, 0.18);
+  --toast-shadow: 0 18px 40px rgba(24, 35, 47, 0.16);
+}
+
+html[data-theme="dark"] {
+  --background: #14201f;
+  --foreground: #edf2ec;
+  --card: rgba(21, 33, 35, 0.86);
+  --muted: #b7c7c4;
+  --muted-strong: #d4dfdd;
+  --line: rgba(237, 242, 236, 0.12);
+  --accent: #1f8b84;
+  --accent-strong: #2aa89f;
+  --danger-background: rgba(251, 113, 133, 0.18);
+  --danger-border: rgba(253, 164, 175, 0.26);
+  --danger-text: #fecdd3;
+  --user-bubble: rgba(38, 47, 43, 0.9);
+  --assistant-bubble: rgba(22, 48, 47, 0.9);
+  --selection: rgba(209, 141, 65, 0.42);
+  --background-glow: rgba(31, 139, 132, 0.2);
+  --background-gradient-start: #101918;
+  --background-gradient-end: #182322;
+  --header-background: rgba(18, 29, 31, 0.84);
+  --field-background: rgba(24, 37, 39, 0.9);
+  --button-secondary-background: rgba(24, 37, 39, 0.86);
+  --button-secondary-hover: rgba(31, 47, 49, 0.96);
+  --surface-soft: rgba(24, 37, 39, 0.78);
+  --surface-strong: rgba(28, 43, 45, 0.92);
+  --drawer-background: rgba(16, 25, 24, 0.97);
+  --overlay-background: rgba(3, 8, 10, 0.56);
+  --shadow-soft: 0 14px 38px rgba(0, 0, 0, 0.28);
+  --shadow-strong: 0 24px 64px rgba(0, 0, 0, 0.42);
+  --toast-shadow: 0 18px 40px rgba(0, 0, 0, 0.34);
 }
 
 @theme inline {
@@ -25,15 +74,21 @@
 }
 
 html {
+  color-scheme: light;
   background:
-    radial-gradient(circle at top left, rgba(15, 95, 92, 0.08), transparent 24%),
-    linear-gradient(180deg, #f6f2eb 0%, #f0ebe2 100%);
+    radial-gradient(circle at top left, var(--background-glow), transparent 24%),
+    linear-gradient(180deg, var(--background-gradient-start) 0%, var(--background-gradient-end) 100%);
+}
+
+html[data-theme="dark"] {
+  color-scheme: dark;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-heading), sans-serif;
+  transition: background-color 180ms ease, color 180ms ease;
 }
 
 a {
@@ -55,16 +110,17 @@ textarea {
 .surface {
   background: var(--card);
   border: 1px solid var(--line);
-  box-shadow: 0 10px 28px rgba(24, 35, 47, 0.06);
+  box-shadow: var(--shadow-soft);
 }
 
 .field {
   width: 100%;
   border-radius: 0.9rem;
   border: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.78);
+  background: var(--field-background);
   padding: 0.72rem 0.9rem;
   color: var(--foreground);
+  transition: background-color 180ms ease, border-color 180ms ease, color 180ms ease;
 }
 
 .field:focus {
@@ -94,17 +150,248 @@ textarea {
 .button-secondary {
   border-radius: 999px;
   border: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.82);
+  background: var(--button-secondary-background);
   padding: 0.68rem 1rem;
+  color: var(--foreground);
   font-weight: 600;
-  transition: background-color 150ms ease, transform 150ms ease;
+  transition: background-color 150ms ease, transform 150ms ease, border-color 150ms ease, color 150ms ease;
 }
 
 .button-secondary:hover {
-  background: rgba(255, 255, 255, 0.94);
+  background: var(--button-secondary-hover);
   transform: translateY(-1px);
 }
 
 .mono {
   font-family: var(--font-mono), monospace;
+}
+
+.button-danger {
+  border-radius: 999px;
+  border: 1px solid var(--danger-border);
+  background: var(--danger-background);
+  color: var(--danger-text);
+  padding: 0.68rem 1rem;
+  font-weight: 700;
+  transition: background-color 150ms ease, transform 150ms ease, border-color 150ms ease, color 150ms ease;
+}
+
+.button-danger:hover {
+  background: color-mix(in srgb, var(--danger-background) 72%, white 6%);
+  transform: translateY(-1px);
+}
+
+.status-badge {
+  display: inline-flex;
+  border-radius: 999px;
+  border: 1px solid var(--status-border);
+  background: var(--status-background);
+  color: var(--status-foreground);
+  padding: 0.25rem 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.theme-header {
+  border-bottom: 1px solid var(--line);
+  background: var(--header-background);
+}
+
+.theme-soft-surface {
+  background: var(--surface-soft);
+}
+
+.theme-strong-surface {
+  background: var(--surface-strong);
+}
+
+.theme-drawer {
+  background: var(--drawer-background);
+  box-shadow: var(--shadow-strong);
+}
+
+.theme-overlay {
+  background: var(--overlay-background);
+}
+
+html[data-theme="dark"] [class*="bg-white/"] {
+  background: var(--surface-soft) !important;
+}
+
+html[data-theme="dark"] [class~="bg-white"] {
+  background: var(--surface-strong) !important;
+}
+
+html[data-theme="dark"] [class*="border-black/5"] {
+  border-color: var(--line) !important;
+}
+
+html[data-theme="dark"] [class*="text-slate-900"],
+html[data-theme="dark"] [class*="text-slate-950"],
+html[data-theme="dark"] [class*="text-stone-900"],
+html[data-theme="dark"] [class*="text-stone-950"] {
+  color: var(--foreground) !important;
+}
+
+html[data-theme="dark"] [class*="text-slate-800"],
+html[data-theme="dark"] [class*="text-slate-700"],
+html[data-theme="dark"] [class*="text-stone-800"],
+html[data-theme="dark"] [class*="text-stone-700"] {
+  color: var(--muted-strong) !important;
+}
+
+html[data-theme="dark"] [class*="text-slate-500"] {
+  color: var(--muted) !important;
+}
+
+html[data-theme="dark"] [class*="bg-emerald-50"] {
+  background: rgba(16, 185, 129, 0.18) !important;
+}
+
+html[data-theme="dark"] [class*="border-emerald-200"] {
+  border-color: rgba(52, 211, 153, 0.34) !important;
+}
+
+html[data-theme="dark"] [class*="text-emerald-950"],
+html[data-theme="dark"] [class*="text-emerald-900"],
+html[data-theme="dark"] [class*="text-emerald-800"],
+html[data-theme="dark"] [class*="text-emerald-700"] {
+  color: #bdf7df !important;
+}
+
+html[data-theme="dark"] [class*="bg-amber-50"] {
+  background: rgba(245, 158, 11, 0.18) !important;
+}
+
+html[data-theme="dark"] [class*="border-amber-200"],
+html[data-theme="dark"] [class*="border-amber-300"] {
+  border-color: rgba(251, 191, 36, 0.34) !important;
+}
+
+html[data-theme="dark"] [class*="text-amber-900"],
+html[data-theme="dark"] [class*="text-amber-800"] {
+  color: #fde7b0 !important;
+}
+
+html[data-theme="dark"] [class*="bg-rose-50"] {
+  background: rgba(244, 63, 94, 0.18) !important;
+}
+
+html[data-theme="dark"] [class*="border-rose-200"],
+html[data-theme="dark"] [class*="border-rose-300"] {
+  border-color: rgba(251, 113, 133, 0.34) !important;
+}
+
+html[data-theme="dark"] [class*="text-rose-950"],
+html[data-theme="dark"] [class*="text-rose-900"],
+html[data-theme="dark"] [class*="text-rose-800"],
+html[data-theme="dark"] [class*="text-rose-700"] {
+  color: #ffd0d8 !important;
+}
+
+html[data-theme="dark"] [class*="bg-sky-50"] {
+  background: rgba(14, 165, 233, 0.18) !important;
+}
+
+html[data-theme="dark"] [class*="border-sky-200"] {
+  border-color: rgba(14, 165, 233, 0.32) !important;
+}
+
+html[data-theme="dark"] [class*="text-sky-950"],
+html[data-theme="dark"] [class*="text-sky-900"],
+html[data-theme="dark"] [class*="text-sky-800"] {
+  color: #c7f0ff !important;
+}
+
+html[data-theme="dark"] [class*="bg-cyan-50"] {
+  background: rgba(6, 182, 212, 0.18) !important;
+}
+
+html[data-theme="dark"] [class*="border-cyan-200"] {
+  border-color: rgba(6, 182, 212, 0.32) !important;
+}
+
+html[data-theme="dark"] [class*="text-cyan-900"],
+html[data-theme="dark"] [class*="text-cyan-800"] {
+  color: #baf7ff !important;
+}
+
+html[data-theme="dark"] [class*="bg-blue-50"] {
+  background: rgba(59, 130, 246, 0.18) !important;
+}
+
+html[data-theme="dark"] [class*="border-blue-200"] {
+  border-color: rgba(96, 165, 250, 0.32) !important;
+}
+
+html[data-theme="dark"] [class*="text-blue-900"],
+html[data-theme="dark"] [class*="text-blue-800"] {
+  color: #d2e3ff !important;
+}
+
+html[data-theme="dark"] [class*="bg-orange-50"] {
+  background: rgba(249, 115, 22, 0.18) !important;
+}
+
+html[data-theme="dark"] [class*="border-orange-200"] {
+  border-color: rgba(251, 146, 60, 0.32) !important;
+}
+
+html[data-theme="dark"] [class*="text-orange-900"],
+html[data-theme="dark"] [class*="text-orange-800"] {
+  color: #ffd8bf !important;
+}
+
+html[data-theme="dark"] [class*="bg-fuchsia-50"] {
+  background: rgba(217, 70, 239, 0.18) !important;
+}
+
+html[data-theme="dark"] [class*="border-fuchsia-200"] {
+  border-color: rgba(232, 121, 249, 0.32) !important;
+}
+
+html[data-theme="dark"] [class*="text-fuchsia-800"] {
+  color: #f5c7ff !important;
+}
+
+html[data-theme="dark"] [class*="bg-violet-50"] {
+  background: rgba(139, 92, 246, 0.18) !important;
+}
+
+html[data-theme="dark"] [class*="border-violet-200"] {
+  border-color: rgba(167, 139, 250, 0.32) !important;
+}
+
+html[data-theme="dark"] [class*="text-violet-800"] {
+  color: #e7d6ff !important;
+}
+
+html[data-theme="dark"] [class*="bg-lime-50"] {
+  background: rgba(132, 204, 22, 0.18) !important;
+}
+
+html[data-theme="dark"] [class*="border-lime-200"] {
+  border-color: rgba(163, 230, 53, 0.32) !important;
+}
+
+html[data-theme="dark"] [class*="text-lime-800"] {
+  color: #e3f8ba !important;
+}
+
+html[data-theme="dark"] [class*="bg-teal-50"] {
+  background: rgba(20, 184, 166, 0.18) !important;
+}
+
+html[data-theme="dark"] [class*="border-teal-200"] {
+  border-color: rgba(45, 212, 191, 0.32) !important;
+}
+
+html[data-theme="dark"] [class*="text-teal-800"] {
+  color: #c7fff7 !important;
+}
+
+html[data-theme="dark"] [class*="bg-slate-300"] {
+  background: rgba(100, 116, 139, 0.22) !important;
 }

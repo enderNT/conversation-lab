@@ -27,7 +27,7 @@ function CompactMetric({
   value: string | number;
 }) {
   return (
-    <div className="rounded-[1.25rem] border border-[var(--line)] bg-white/70 px-4 py-3">
+    <div className="theme-soft-surface rounded-[1.25rem] border border-[var(--line)] px-4 py-3">
       <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--muted)]">
         {label}
       </p>
@@ -56,7 +56,7 @@ function DrawerTabs<T extends string>({
             "rounded-full px-3 py-1.5 text-sm font-medium transition",
             value === option.id
               ? "bg-[var(--accent)] text-white"
-              : "border border-[var(--line)] bg-white text-[var(--muted)] hover:text-[var(--foreground)]",
+              : "theme-strong-surface border border-[var(--line)] text-[var(--muted)] hover:text-[var(--foreground)]",
           )}
         >
           {option.label}
@@ -107,9 +107,9 @@ function TaskCatalogDrawer({
   const isEditing = mode === "edit" && taskSpec;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-stretch justify-end bg-[rgba(17,24,39,0.32)] backdrop-blur-[1px]">
+    <div className="theme-overlay fixed inset-0 z-50 flex items-stretch justify-end backdrop-blur-[1px]">
       <button type="button" aria-label="Cerrar panel" className="flex-1" onClick={onClose} />
-      <div className="relative flex h-full w-full max-w-[min(760px,100vw)] flex-col border-l border-[var(--line)] bg-[rgba(248,246,241,0.98)] shadow-[0_18px_48px_rgba(15,23,42,0.18)]">
+      <div className="theme-drawer relative flex h-full w-full max-w-[min(760px,100vw)] flex-col border-l border-[var(--line)]">
         <div className="border-b border-[var(--line)] px-5 py-4 sm:px-6">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
@@ -369,7 +369,7 @@ export function TaskCatalogManager({
                         taskSpec.requiredArtifactsText.split(",").map((artifact) => (
                           <span
                             key={`${taskSpec.id}-${artifact}`}
-                            className="rounded-full border border-[var(--line)] bg-white/80 px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] text-[var(--foreground)]/80"
+                            className="theme-strong-surface rounded-full border border-[var(--line)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] text-[var(--foreground)]/80"
                           >
                             {artifact.trim()}
                           </span>
@@ -383,7 +383,7 @@ export function TaskCatalogManager({
                   </div>
 
                   <div className="xl:w-[280px] xl:pl-4">
-                    <div className="rounded-[1.5rem] border border-[var(--line)] bg-white/70 p-4">
+                    <div className="theme-soft-surface rounded-[1.5rem] border border-[var(--line)] p-4">
                       <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--muted)]">
                         Last update
                       </p>

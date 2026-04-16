@@ -54,7 +54,7 @@ function FormSection({
   children: React.ReactNode;
 }) {
   return (
-    <section className="rounded-[1.5rem] border border-[var(--line)] bg-white/65 p-4 sm:p-5">
+    <section className="theme-soft-surface rounded-[1.5rem] border border-[var(--line)] p-4 sm:p-5">
       <SectionHeader title={title} description={description} />
       <div className="mt-4 grid gap-4">{children}</div>
     </section>
@@ -157,7 +157,7 @@ export function TaskSpecForm({
             />
           </label>
 
-          <label className="flex items-center gap-3 rounded-[1rem] border border-[var(--line)] bg-white/80 px-4 py-3 text-sm font-medium text-[var(--foreground)]">
+          <label className="theme-strong-surface flex items-center gap-3 rounded-[1rem] border border-[var(--line)] px-4 py-3 text-sm font-medium text-[var(--foreground)]">
             <input type="checkbox" name="isActive" defaultChecked={taskSpec?.isActive ?? true} />
             Active task spec
           </label>
@@ -241,7 +241,7 @@ export function TaskSpecForm({
 
       <input type="hidden" name="updatedBy" value="human" />
 
-      <div className="sticky bottom-0 mt-auto flex flex-wrap items-center justify-between gap-3 border-t border-[var(--line)] bg-[rgba(248,246,241,0.96)] px-1 py-4 backdrop-blur-xl">
+      <div className="sticky bottom-0 mt-auto flex flex-wrap items-center justify-between gap-3 border-t border-[var(--line)] bg-[var(--drawer-background)] px-1 py-4 backdrop-blur-xl">
         <p className="text-sm text-[var(--muted)]">
           {isEditing
             ? "Edit the spec in one focused panel, save it, and return to the manager list."
