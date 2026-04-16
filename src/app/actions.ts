@@ -1317,10 +1317,8 @@ export async function createTaskSpecWithFeedback(
 
   revalidatePath("/tasks");
   revalidatePath("/cases");
-  return buildActionSuccessState("Task spec creado correctamente.", {
-    redirectTo: "/tasks",
-    navigationMode: "replace",
-  });
+  revalidatePath("/exports");
+  return buildActionRefreshSuccessState("Task spec creado correctamente.");
 }
 
 export async function updateTaskSpec(taskSpecId: string, formData: FormData) {
@@ -1418,10 +1416,51 @@ export async function updateTaskSpecWithFeedback(
   revalidatePath("/tasks");
   revalidatePath("/cases");
   revalidatePath("/exports");
-  return buildActionSuccessState("Task spec actualizado correctamente.", {
-    redirectTo: "/tasks",
-    navigationMode: "replace",
-  });
+  return buildActionRefreshSuccessState("Task spec actualizado correctamente.");
+}
+
+export async function deleteTaskSpecWithFeedback(
+  taskSpecId: string,
+  previousState: ActionFormState,
+) {
+  void previousState;
+
+  try {
+    const taskSpec = await prisma.taskSpec.findUnique({
+      where: { id: taskSpecId },
+      select: {
+        name: true,
+        _count: {
+          select: {
+            derivedExamples: true,
+          },
+        },
+      },
+    });
+
+    if (!taskSpec) {
+      return buildActionErrorState("El task spec ya no existe.");
+    }
+
+    if (taskSpec._count.derivedExamples > 0) {
+      return buildActionErrorState(
+        `No se puede eliminar ${taskSpec.name} porque ya tiene derived examples asociados.`,
+      );
+    }
+
+    await prisma.taskSpec.delete({
+      where: { id: taskSpecId },
+    });
+  } catch (error) {
+    return buildActionErrorState(
+      getActionErrorMessage(error, "No fue posible eliminar el task spec."),
+    );
+  }
+
+  revalidatePath("/tasks");
+  revalidatePath("/cases");
+  revalidatePath("/exports");
+  return buildActionRefreshSuccessState("Task spec eliminado correctamente.");
 }
 
 export async function createDerivedExample(caseId: string, formData: FormData) {
