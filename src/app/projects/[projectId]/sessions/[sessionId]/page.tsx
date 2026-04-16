@@ -38,14 +38,14 @@ export default async function SessionChatPage({
   const chatRuntime = getChatRuntimeConfiguration();
 
   return (
-    <div className="-mx-4 flex min-h-0 flex-1 flex-col sm:-mx-6 lg:-mx-8">
+    <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
       {!chatRuntime.enabled ? (
-        <section className="mx-4 mb-4 rounded-[1.75rem] border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-900 sm:mx-6 lg:mx-8">
+        <section className="border-b border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-900">
           El chat real con LLM está deshabilitado. {chatRuntime.disabledReason}
         </section>
       ) : null}
 
-      <section className="flex min-h-0 flex-1 flex-col">
+      <section className="flex min-h-0 flex-1 flex-col overflow-hidden">
         <SessionSelection
           projectId={projectId}
           sessionId={sessionId}

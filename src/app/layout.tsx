@@ -49,7 +49,7 @@ export default function RootLayout({
       className={`${headingFont.variable} ${monoFont.variable} h-full antialiased`}
       suppressHydrationWarning
     >
-      <body className="min-h-full">
+      <body className="h-full">
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
         <AppShell>{children}</AppShell>
       </body>

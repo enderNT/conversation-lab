@@ -539,7 +539,7 @@ export function SessionSelection({
 
   return (
     <>
-      <section className="surface relative flex min-h-[70vh] flex-1 flex-col overflow-hidden rounded-none border-y sm:min-h-0 sm:rounded-[2rem] sm:border">
+      <section className="surface relative flex h-full min-h-0 flex-1 flex-col overflow-hidden rounded-none border-y border-x-0">
         <div className="absolute inset-x-0 top-0 h-40 bg-[radial-gradient(circle_at_top_right,rgba(15,95,92,0.16),transparent_44%)]" />
 
         <header className="theme-strong-surface relative border-b border-[var(--line)] px-4 py-4 sm:px-6 lg:px-8">
@@ -692,7 +692,7 @@ export function SessionSelection({
         <div className="relative min-h-0 flex-1 overflow-hidden">
           <div
             ref={messagesRef}
-            className="mx-auto flex h-full w-full max-w-5xl flex-col gap-4 overflow-y-auto px-4 py-6 sm:px-6 lg:px-8"
+            className="flex h-full min-w-0 w-full flex-col gap-4 overflow-y-auto px-4 py-6 sm:px-6 lg:px-8"
           >
             {messages.length === 0 ? (
               <div className="theme-soft-surface mx-auto flex min-h-full w-full max-w-3xl flex-1 items-center justify-center rounded-[2rem] border border-dashed border-[var(--line)] px-6 py-16 text-center text-sm leading-7 text-[var(--muted)]">
@@ -762,7 +762,7 @@ export function SessionSelection({
         </div>
 
         <footer className="theme-strong-surface relative border-t border-[var(--line)] px-4 py-4 sm:px-6 lg:px-8">
-          <div className="mx-auto w-full max-w-5xl">
+          <div className="w-full min-w-0">
             {selectionRange ? (
               <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-[1.5rem] border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
                 <div>
@@ -801,7 +801,7 @@ export function SessionSelection({
             <form ref={formRef} onSubmit={handleSubmit} className="rounded-[1.75rem] border border-[var(--line)] bg-white/80 p-3 shadow-[0_12px_36px_rgba(15,23,42,0.08)] backdrop-blur">
               <textarea
                 ref={textareaRef}
-                className="min-h-28 w-full resize-none bg-transparent px-2 py-2 text-sm leading-7 text-[var(--foreground)] outline-none placeholder:text-[var(--muted)]"
+                className="min-h-7 w-full resize-none bg-transparent px-2 py-1 text-sm leading-5 text-[var(--foreground)] outline-none placeholder:text-[var(--muted)]"
                 value={draft}
                 onChange={(event) => setDraft(event.target.value)}
                 onKeyDown={(event) => {
