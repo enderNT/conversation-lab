@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useEffect, useRef, useState, startTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
+  clearSessionChat,
+  deleteSession,
   sendSessionMessage,
   updateSessionChatModel,
   updateSessionSystemPrompt,
@@ -33,6 +35,7 @@ type SessionSelectionProps = {
   chatConnectionCheckedAt: string | null;
   chatConnectionVerifiedAt: string | null;
   chatConnectionError: string | null;
+  caseCount: number;
   systemPrompt: string;
 };
 
@@ -48,6 +51,7 @@ export function SessionSelection({
   chatConnectionCheckedAt,
   chatConnectionVerifiedAt,
   chatConnectionError,
+  caseCount,
   systemPrompt,
 }: SessionSelectionProps) {
   const router = useRouter();
@@ -60,6 +64,8 @@ export function SessionSelection({
   const [isSavingModel, setIsSavingModel] = useState(false);
   const [isTestingConnection, setIsTestingConnection] = useState(false);
   const [isSavingPrompt, setIsSavingPrompt] = useState(false);
+  const [isClearingChat, setIsClearingChat] = useState(false);
+  const [isDeletingSession, setIsDeletingSession] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -323,6 +329,115 @@ export function SessionSelection({
     }
   }
 
+  async function handleClearChat() {
+    if (isClearingChat || messages.length === 0) {
+      return;
+    }
+
+    const shouldClear = window.confirm(
+      caseCount > 0
+        ? "Esto eliminará todos los mensajes de esta sesión, pero conservará los casos ya guardados. ¿Quieres continuar?"
+        : "Esto eliminará todos los mensajes de esta sesión. ¿Quieres continuar?",
+    );
+
+    if (!shouldClear) {
+      return;
+    }
+
+    setIsClearingChat(true);
+    setErrorMessage(null);
+
+    try {
+      const result = await clearSessionChat(projectId, sessionId);
+
+      if (!result.ok) {
+        pushToast({
+          title: "No fue posible limpiar el chat",
+          description: result.error,
+          variant: "error",
+          durationMs: 7000,
+        });
+        return;
+      }
+
+      setAnchorIndex(null);
+      setFocusIndex(null);
+      setDraft("");
+      pushToast({
+        title: "Chat limpiado",
+        description: result.message,
+        variant: "success",
+        durationMs: 7000,
+      });
+
+      startTransition(() => {
+        router.refresh();
+      });
+    } catch {
+      pushToast({
+        title: "No fue posible limpiar el chat",
+        description: "No fue posible eliminar los mensajes de la sesión.",
+        variant: "error",
+        durationMs: 7000,
+      });
+    } finally {
+      setIsClearingChat(false);
+    }
+  }
+
+  async function handleDeleteSession() {
+    if (isDeletingSession) {
+      return;
+    }
+
+    const shouldDelete = window.confirm(
+      caseCount > 0
+        ? `Esto eliminará la sesión completa junto con ${caseCount} caso(s) asociado(s). Esta acción no se puede deshacer. ¿Quieres continuar?`
+        : "Esto eliminará la sesión completa. Esta acción no se puede deshacer. ¿Quieres continuar?",
+    );
+
+    if (!shouldDelete) {
+      return;
+    }
+
+    setIsDeletingSession(true);
+    setErrorMessage(null);
+
+    try {
+      const result = await deleteSession(projectId, sessionId);
+
+      if (!result.ok) {
+        pushToast({
+          title: "No fue posible eliminar el chat",
+          description: result.error,
+          variant: "error",
+          durationMs: 7000,
+        });
+        return;
+      }
+
+      pushToast({
+        title: "Chat eliminado",
+        description: result.message,
+        variant: "success",
+        durationMs: 7000,
+      });
+
+      startTransition(() => {
+        router.push(result.redirectTo);
+      });
+    } catch {
+      pushToast({
+        title: "No fue posible eliminar el chat",
+        description: "No fue posible eliminar la sesión seleccionada.",
+        variant: "error",
+        durationMs: 7000,
+      });
+    } finally {
+      setIsDeletingSession(false);
+    }
+  }
+
   const promptIsDirty = systemPromptDraft.trim() !== systemPrompt.trim();
 
   return (
@@ -455,7 +570,7 @@ export function SessionSelection({
               }}
               placeholder="Escribe tu mensaje para iniciar o continuar la conversación con el modelo."
               required
-              disabled={!chatEnabled || isSending}
+              disabled={!chatEnabled || isSending || isClearingChat || isDeletingSession}
             />
           </label>
 
@@ -466,7 +581,13 @@ export function SessionSelection({
             <button
               type="submit"
               className="button-primary"
-              disabled={!chatEnabled || isSending || draft.trim().length === 0}
+              disabled={
+                !chatEnabled ||
+                isSending ||
+                isClearingChat ||
+                isDeletingSession ||
+                draft.trim().length === 0
+              }
             >
               {isSending ? "Sending..." : "Send"}
             </button>
@@ -588,6 +709,35 @@ export function SessionSelection({
         >
           Create Case from Selection
         </Link>
+
+        <section className="mt-6 rounded-[1.5rem] border border-rose-200 bg-rose-50/70 p-4 text-rose-900">
+          <h3 className="text-sm font-semibold uppercase tracking-[0.18em]">Danger zone</h3>
+          <p className="mt-2 text-sm leading-6 opacity-85">
+            Puedes vaciar la conversación manteniendo la sesión, o eliminar la sesión completa.
+          </p>
+          <div className="mt-4 space-y-3">
+            <button
+              type="button"
+              className="w-full rounded-full border border-rose-300 px-4 py-3 text-sm font-semibold text-rose-900 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
+              onClick={() => {
+                void handleClearChat();
+              }}
+              disabled={isClearingChat || isDeletingSession || messages.length === 0}
+            >
+              {isClearingChat ? "Limpiando chat..." : "Limpiar chat"}
+            </button>
+            <button
+              type="button"
+              className="w-full rounded-full bg-rose-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
+              onClick={() => {
+                void handleDeleteSession();
+              }}
+              disabled={isDeletingSession || isClearingChat}
+            >
+              {isDeletingSession ? "Eliminando chat..." : "Eliminar chat"}
+            </button>
+          </div>
+        </section>
       </aside>
     </div>
   );

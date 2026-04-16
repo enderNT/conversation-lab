@@ -78,6 +78,7 @@ export default async function SessionChatPage({
           chatConnectionCheckedAt={session.chatConnectionCheckedAt?.toISOString() ?? null}
           chatConnectionVerifiedAt={session.chatConnectionVerifiedAt?.toISOString() ?? null}
           chatConnectionError={session.chatConnectionError}
+          caseCount={session.cases.length}
           systemPrompt={session.systemPrompt || ""}
           messages={session.messages.map((message) => ({
             id: message.id,

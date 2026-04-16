@@ -452,6 +452,121 @@ export async function sendSessionMessage(
   };
 }
 
+export async function clearSessionChat(projectId: string, sessionId: string) {
+  const session = await prisma.session.findUnique({
+    where: { id: sessionId },
+    select: {
+      id: true,
+      projectId: true,
+      _count: {
+        select: {
+          messages: true,
+        },
+      },
+    },
+  });
+
+  if (!session || session.projectId !== projectId) {
+    return {
+      ok: false as const,
+      error: "La sesión no existe o no pertenece al proyecto indicado.",
+    };
+  }
+
+  if (session._count.messages === 0) {
+    return {
+      ok: true as const,
+      clearedMessages: 0,
+      message: "La sesión ya estaba vacía.",
+    };
+  }
+
+  try {
+    const result = await prisma.message.deleteMany({
+      where: { sessionId },
+    });
+
+    revalidatePath(`/projects/${projectId}`);
+    revalidatePath(`/projects/${projectId}/sessions/${sessionId}`);
+
+    return {
+      ok: true as const,
+      clearedMessages: result.count,
+      message:
+        result.count === 1
+          ? "Se eliminó 1 mensaje de la conversación."
+          : `Se eliminaron ${result.count} mensajes de la conversación.`,
+    };
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : "No fue posible limpiar la conversación de la sesión.";
+
+    return {
+      ok: false as const,
+      error: message,
+    };
+  }
+}
+
+export async function deleteSession(projectId: string, sessionId: string) {
+  const session = await prisma.session.findUnique({
+    where: { id: sessionId },
+    select: {
+      id: true,
+      projectId: true,
+      _count: {
+        select: {
+          messages: true,
+          cases: true,
+        },
+      },
+    },
+  });
+
+  if (!session || session.projectId !== projectId) {
+    return {
+      ok: false as const,
+      error: "La sesión no existe o no pertenece al proyecto indicado.",
+    };
+  }
+
+  try {
+    await prisma.session.delete({
+      where: { id: sessionId },
+    });
+
+    revalidatePath("/");
+    revalidatePath("/cases");
+    revalidatePath("/tasks");
+    revalidatePath("/exports");
+    revalidatePath(`/projects/${projectId}`);
+    revalidatePath(`/projects/${projectId}/sessions/${sessionId}`);
+
+    return {
+      ok: true as const,
+      redirectTo: `/projects/${projectId}`,
+      deletedMessages: session._count.messages,
+      deletedCases: session._count.cases,
+      message:
+        session._count.cases > 0
+          ? `La sesión y sus ${session._count.cases} caso(s) asociados fueron eliminados.`
+          : "La sesión fue eliminada correctamente.",
+    };
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : "No fue posible eliminar la sesión.";
+
+    return {
+      ok: false as const,
+      error: message,
+    };
+  }
+}
+
 export async function updateSessionChatModel(
   projectId: string,
   sessionId: string,
