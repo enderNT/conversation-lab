@@ -62,7 +62,8 @@ type SessionSelectionProps = {
   chatRuntimeEnabled: boolean;
   chatRuntimeDisabledReason: string | null;
   chatProviderLabel: string;
-  chatBaseUrl: string | null;
+  chatBaseUrl: string;
+  chatResolvedBaseUrl: string | null;
   chatConnectionCheckedAt: string | null;
   chatConnectionVerifiedAt: string | null;
   chatConnectionError: string | null;
@@ -82,7 +83,8 @@ export function SessionSelection({
   chatRuntimeEnabled,
   chatRuntimeDisabledReason = null,
   chatProviderLabel = "",
-  chatBaseUrl = null,
+  chatBaseUrl = "",
+  chatResolvedBaseUrl = null,
   chatConnectionCheckedAt = null,
   chatConnectionVerifiedAt = null,
   chatConnectionError = null,
@@ -95,6 +97,7 @@ export function SessionSelection({
   const [focusIndex, setFocusIndex] = useState<number | null>(null);
   const [draft, setDraft] = useState("");
   const [chatModelDraft, setChatModelDraft] = useState(chatModel);
+  const [chatBaseUrlDraft, setChatBaseUrlDraft] = useState(chatBaseUrl);
   const [systemPromptDraft, setSystemPromptDraft] = useState(systemPrompt);
   const [isSending, setIsSending] = useState(false);
   const [isSavingModel, setIsSavingModel] = useState(false);
@@ -150,6 +153,10 @@ export function SessionSelection({
   useEffect(() => {
     setChatModelDraft(chatModel);
   }, [chatModel]);
+
+  useEffect(() => {
+    setChatBaseUrlDraft(chatBaseUrl);
+  }, [chatBaseUrl]);
 
   useEffect(() => {
     setSystemPromptDraft(systemPrompt);
@@ -228,7 +235,13 @@ export function SessionSelection({
     };
   }, [headerMenuOpen, toolsOpen]);
 
+  function normalizeDraftBaseUrl(value: string) {
+    return value.trim().replace(/\/+$/, "");
+  }
+
   const modelIsDirty = chatModelDraft.trim() !== chatModel.trim();
+  const baseUrlIsDirty = normalizeDraftBaseUrl(chatBaseUrlDraft) !== normalizeDraftBaseUrl(chatBaseUrl);
+  const chatSettingsAreDirty = modelIsDirty || baseUrlIsDirty;
   const promptIsDirty = systemPromptDraft.trim() !== systemPrompt.trim();
   const chatModelIsConfigured = chatModelDraft.trim().length > 0;
   const chatConnectionIsVerified = Boolean(chatConnectionVerifiedAt) && !chatConnectionError;
@@ -236,18 +249,18 @@ export function SessionSelection({
     chatRuntimeEnabled &&
     chatModelIsConfigured &&
     chatConnectionIsVerified &&
-    !modelIsDirty;
+    !chatSettingsAreDirty;
 
   const chatAvailabilityMessage = !chatRuntimeEnabled
     ? chatRuntimeDisabledReason || "La configuración del proveedor no es válida."
-    : modelIsDirty
-      ? "Guarda o vuelve a probar el modelo antes de enviar mensajes."
+    : chatSettingsAreDirty
+      ? "Guarda o vuelve a probar la configuración antes de enviar mensajes."
       : !chatModelIsConfigured
         ? "Define un modelo para esta sesión antes de habilitar el chat."
         : chatConnectionError
-          ? "La última prueba de conexión falló. Corrige el modelo o el backend y vuelve a probar."
+          ? "La última prueba de conexión falló. Corrige el modelo, la URL o el backend y vuelve a probar."
           : !chatConnectionVerifiedAt
-            ? "Prueba la conexión del modelo antes de usar el chat."
+            ? "Prueba la conexión de esta configuración antes de usar el chat."
             : "Enter envía. Shift+Enter agrega una nueva línea.";
 
   function clearSelection() {
@@ -346,11 +359,12 @@ export function SessionSelection({
     try {
       const result = await updateSessionChatModel(projectId, sessionId, {
         chatModel: chatModelDraft,
+        chatBaseUrl: chatBaseUrlDraft,
       });
 
       if (!result.ok) {
         pushToast({
-          title: "No fue posible guardar el modelo",
+          title: "No fue posible guardar la configuración",
           description: result.error,
           variant: "error",
           durationMs: 7000,
@@ -359,10 +373,14 @@ export function SessionSelection({
       }
 
       pushToast({
-        title: chatModelDraft.trim() ? "Modelo guardado" : "Modelo eliminado",
-        description: chatModelDraft.trim()
-          ? "La sesión guardó el modelo y dejó pendiente una nueva verificación de conexión."
-          : "La sesión quedó sin modelo configurado.",
+        title:
+          chatModelDraft.trim() || chatBaseUrlDraft.trim()
+            ? "Configuración guardada"
+            : "Configuración eliminada",
+        description:
+          chatModelDraft.trim() || chatBaseUrlDraft.trim()
+            ? "La sesión guardó el modelo y la URL, y dejó pendiente una nueva verificación de conexión."
+            : "La sesión quedó sin modelo ni URL personalizados.",
         variant: "success",
         durationMs: 5000,
       });
@@ -372,8 +390,8 @@ export function SessionSelection({
       });
     } catch {
       pushToast({
-        title: "No fue posible guardar el modelo",
-        description: "No fue posible actualizar el modelo configurado para esta sesión.",
+        title: "No fue posible guardar la configuración",
+        description: "No fue posible actualizar el modelo o la URL configurados para esta sesión.",
         variant: "error",
         durationMs: 7000,
       });
@@ -392,6 +410,7 @@ export function SessionSelection({
     try {
       const result = await verifySessionChatConnection(projectId, sessionId, {
         chatModel: chatModelDraft,
+        chatBaseUrl: chatBaseUrlDraft,
       });
 
       if (!result.ok) {
@@ -567,10 +586,10 @@ export function SessionSelection({
     : chatConnectionError
       ? "Revisar conexión"
       : !chatModelIsConfigured
-        ? "Configuracion pendiente"
+        ? "Configuración pendiente"
         : !chatConnectionVerifiedAt
           ? "Prueba pendiente"
-          : modelIsDirty
+          : chatSettingsAreDirty
             ? "Cambios sin guardar"
             : "Chat pausado";
 
@@ -1172,15 +1191,19 @@ export function SessionSelection({
 
       <CenteredSheet
         open={activePanel === "settings"}
-        title="Configuración y test del modelo"
-        description="Ajusta el modelo, verifica la conexión y define el prompt de comportamiento sin sacar al transcript del foco principal."
+        title="Configuración y test del chat"
+        description="Ajusta el modelo, la URL, verifica la conexión y define el prompt de comportamiento sin sacar al transcript del foco principal."
         onClose={() => setActivePanel(null)}
       >
         <div className="space-y-6">
           <div className="grid gap-4 lg:grid-cols-3">
             <InfoCard label="Proveedor" value={chatProviderLabel} />
             <InfoCard label="Modelo guardado" value={chatModel || "Sin definir"} />
-            <InfoCard label="Base URL" value={chatBaseUrl || "https://api.openai.com/v1"} compact />
+            <InfoCard
+              label="URL efectiva"
+              value={chatResolvedBaseUrl || "https://api.openai.com/v1"}
+              compact
+            />
           </div>
 
           <label className="block space-y-2">
@@ -1192,6 +1215,20 @@ export function SessionSelection({
               placeholder="Ejemplo: gpt-5-mini o el identificador expuesto por tu backend"
               disabled={isSavingModel || isTestingConnection}
             />
+          </label>
+
+          <label className="block space-y-2">
+            <FormLabel>Chat URL (optional)</FormLabel>
+            <input
+              className="field mono"
+              value={chatBaseUrlDraft}
+              onChange={(event) => setChatBaseUrlDraft(event.target.value)}
+              placeholder="Ejemplo: http://localhost:1234/v1"
+              disabled={isSavingModel || isTestingConnection}
+            />
+            <p className="text-sm text-[var(--muted)]">
+              Si la dejas vacía, la sesión usa la URL por defecto del entorno.
+            </p>
           </label>
 
           <div className="flex flex-wrap items-center justify-between gap-4 rounded-[1.5rem] border border-[var(--line)] bg-white/60 p-4">
@@ -1215,9 +1252,9 @@ export function SessionSelection({
                 onClick={() => {
                   void handleSaveChatModel();
                 }}
-                disabled={isSavingModel || isTestingConnection || !modelIsDirty}
+                disabled={isSavingModel || isTestingConnection || !chatSettingsAreDirty}
               >
-                {isSavingModel ? "Guardando modelo..." : "Guardar modelo"}
+                {isSavingModel ? "Guardando..." : "Guardar configuración"}
               </button>
               <button
                 type="button"
@@ -1228,7 +1265,6 @@ export function SessionSelection({
                 disabled={
                   isSavingModel ||
                   isTestingConnection ||
-                  !chatRuntimeEnabled ||
                   chatModelDraft.trim().length === 0
                 }
               >
@@ -1246,7 +1282,7 @@ export function SessionSelection({
             )}
           >
             {chatEnabled
-              ? "El chat está habilitado para este modelo verificado."
+              ? "El chat está habilitado para esta configuración verificada."
               : chatAvailabilityMessage}
           </div>
 

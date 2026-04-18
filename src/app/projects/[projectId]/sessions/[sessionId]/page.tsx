@@ -49,7 +49,7 @@ export default async function SessionChatPage({
     notFound();
   }
 
-  const chatRuntime = getChatRuntimeConfiguration();
+  const chatRuntime = getChatRuntimeConfiguration(session.chatBaseUrl);
 
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
@@ -75,7 +75,8 @@ export default async function SessionChatPage({
           chatRuntimeEnabled={chatRuntime.enabled}
           chatRuntimeDisabledReason={chatRuntime.disabledReason}
           chatProviderLabel={chatRuntime.providerLabel}
-          chatBaseUrl={chatRuntime.baseUrl}
+          chatBaseUrl={session.chatBaseUrl || ""}
+          chatResolvedBaseUrl={chatRuntime.resolvedBaseUrl}
           chatModel={session.chatModel || ""}
           chatConnectionCheckedAt={session.chatConnectionCheckedAt?.toISOString() ?? null}
           chatConnectionVerifiedAt={session.chatConnectionVerifiedAt?.toISOString() ?? null}

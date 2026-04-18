@@ -18,26 +18,49 @@ export function isOpenAICompatibleModeEnabled() {
   return readBooleanEnv(process.env.OPENAI_COMPATIBLE);
 }
 
-export function getConfiguredOpenAIBaseUrl() {
-  const baseUrl = process.env.OPENAI_BASE_URL?.trim();
+export function normalizeChatBaseUrl(value: string | null | undefined) {
+  const trimmedValue = value?.trim();
 
-  if (!baseUrl) {
+  if (!trimmedValue) {
     return null;
   }
 
-  return baseUrl.replace(/\/+$/, "");
+  let parsedUrl: URL;
+
+  try {
+    parsedUrl = new URL(trimmedValue);
+  } catch {
+    throw new Error("Define una URL valida para el backend del chat.");
+  }
+
+  if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+    throw new Error("La URL del chat debe usar http o https.");
+  }
+
+  parsedUrl.hash = "";
+  parsedUrl.search = "";
+
+  return parsedUrl.toString().replace(/\/+$/, "");
 }
 
-export function getChatRuntimeConfiguration() {
+export function getConfiguredOpenAIBaseUrl() {
+  return normalizeChatBaseUrl(process.env.OPENAI_BASE_URL);
+}
+
+export function getChatRuntimeConfiguration(baseUrlOverride?: string | null) {
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   const compatibleMode = isOpenAICompatibleModeEnabled();
-  const baseUrl = compatibleMode ? getConfiguredOpenAIBaseUrl() : null;
-  const providerLabel = compatibleMode ? "OpenAI-compatible" : "OpenAI";
-  const disabledReason = compatibleMode && !baseUrl
-      ? "Define OPENAI_BASE_URL para usar un backend OpenAI-compatible."
-    : !compatibleMode && !apiKey
-      ? "Define OPENAI_API_KEY para habilitar el chat con OpenAI."
-      : null;
+  const configuredBaseUrl = getConfiguredOpenAIBaseUrl();
+  const overrideBaseUrl = normalizeChatBaseUrl(baseUrlOverride);
+  const baseUrl = overrideBaseUrl || (compatibleMode ? configuredBaseUrl : null);
+  const providerLabel = baseUrl || compatibleMode ? "OpenAI-compatible" : "OpenAI";
+  const disabledReason = baseUrl
+    ? null
+    : compatibleMode
+      ? "Define OPENAI_BASE_URL o guarda una URL en la sesión para usar un backend OpenAI-compatible."
+      : !apiKey
+        ? "Define OPENAI_API_KEY para habilitar el chat con OpenAI o guarda una URL personalizada en la sesión."
+        : null;
 
   return {
     enabled: disabledReason === null,
@@ -46,12 +69,12 @@ export function getChatRuntimeConfiguration() {
     compatibleMode,
     apiKey: apiKey || null,
     baseUrl,
-    resolvedBaseUrl: compatibleMode ? baseUrl : DEFAULT_OPENAI_BASE_URL,
+    resolvedBaseUrl: baseUrl || DEFAULT_OPENAI_BASE_URL,
   };
 }
 
-function buildApiUrl(pathname: string) {
-  const configuration = getChatRuntimeConfiguration();
+function buildApiUrl(pathname: string, baseUrlOverride?: string | null) {
+  const configuration = getChatRuntimeConfiguration(baseUrlOverride);
 
   if (!configuration.enabled) {
     throw new Error(configuration.disabledReason ?? "OpenAI runtime is not configured.");
@@ -97,8 +120,12 @@ async function parseApiResponse(response: Response) {
   return responseJson;
 }
 
-async function fetchOpenAIJson(pathname: string, init?: RequestInit) {
-  const response = await fetch(buildApiUrl(pathname), {
+async function fetchOpenAIJson(
+  pathname: string,
+  init?: RequestInit,
+  options?: { baseUrl?: string | null },
+) {
+  const response = await fetch(buildApiUrl(pathname, options?.baseUrl), {
     ...init,
     headers: buildRequestHeaders(),
     cache: "no-store",
@@ -111,7 +138,7 @@ function normalizeModel(value: string) {
   return value.trim();
 }
 
-export async function testChatConnection(input: { model: string }) {
+export async function testChatConnection(input: { model: string; baseUrl?: string | null }) {
   const model = normalizeModel(input.model);
 
   if (!model) {
@@ -120,6 +147,8 @@ export async function testChatConnection(input: { model: string }) {
 
   const responseJson = await fetchOpenAIJson("/models", {
     method: "GET",
+  }, {
+    baseUrl: input.baseUrl,
   });
 
   const listedModels =
@@ -159,6 +188,7 @@ export async function generateAssistantReply(input: {
   messages: ConversationMessage[];
   systemPrompt?: string | null;
   model: string;
+  baseUrl?: string | null;
 }) {
   const model = normalizeModel(input.model);
 
@@ -188,6 +218,8 @@ export async function generateAssistantReply(input: {
       model,
       messages: requestMessages,
     }),
+  }, {
+    baseUrl: input.baseUrl,
   })) as {
     id?: string;
     model?: string;
