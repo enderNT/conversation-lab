@@ -99,6 +99,7 @@ export type CaseInterpretation = {
 export type SourceMetadata = {
   project_id: string;
   session_id: string;
+  session_notes?: string;
   selected_turn_ids: string[];
   selected_range: {
     start_order_index: number;

@@ -81,6 +81,8 @@ export function parseSourceMetadata(
   return {
     project_id: typeof record.project_id === "string" ? record.project_id : "",
     session_id: typeof record.session_id === "string" ? record.session_id : "",
+    session_notes:
+      typeof record.session_notes === "string" ? record.session_notes : "",
     selected_turn_ids: toStringArray(record.selected_turn_ids),
     selected_range: {
       start_order_index:
@@ -229,13 +231,17 @@ export function parseStrictJsonValue(value: string) {
 export function buildSourceMetadata(input: {
   projectId: string;
   sessionId: string;
+  sessionNotes?: string | null;
   selectedTurnIds: string[];
   startOrderIndex: number;
   endOrderIndex: number;
 }) {
+  const normalizedSessionNotes = input.sessionNotes?.trim() ?? "";
+
   return {
     project_id: input.projectId,
     session_id: input.sessionId,
+    ...(normalizedSessionNotes ? { session_notes: normalizedSessionNotes } : {}),
     selected_turn_ids: input.selectedTurnIds,
     selected_range: {
       start_order_index: input.startOrderIndex,

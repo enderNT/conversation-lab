@@ -50,6 +50,10 @@ const sessionPromptSchema = z.object({
   systemPrompt: z.string().default(""),
 });
 
+const sessionNotesSchema = z.object({
+  curationNotes: z.string().default(""),
+});
+
 const sessionChatSettingsSchema = z.object({
   chatModel: z.string().trim().default(""),
   chatBaseUrl: z.string().default(""),
@@ -1190,6 +1194,58 @@ export async function updateSessionSystemPrompt(
   };
 }
 
+export async function updateSessionNotes(
+  projectId: string,
+  sessionId: string,
+  input: { curationNotes: string },
+) {
+  const parsed = sessionNotesSchema.parse({
+    curationNotes: input.curationNotes,
+  });
+
+  const session = await prisma.session.findUnique({
+    where: { id: sessionId },
+    select: {
+      id: true,
+      projectId: true,
+    },
+  });
+
+  if (!session || session.projectId !== projectId) {
+    return {
+      ok: false as const,
+      error: "La sesión no existe o no pertenece al proyecto indicado.",
+    };
+  }
+
+  try {
+    const normalizedNotes = parsed.curationNotes.trim();
+
+    await prisma.session.update({
+      where: { id: sessionId },
+      data: {
+        curationNotes: normalizedNotes || null,
+      },
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : "No fue posible actualizar las notas del chat.";
+
+    return {
+      ok: false as const,
+      error: message,
+    };
+  }
+
+  revalidatePath(`/projects/${projectId}/sessions/${sessionId}`);
+
+  return {
+    ok: true as const,
+  };
+}
+
 export async function createCase(
   projectId: string,
   sessionId: string,
@@ -1206,7 +1262,7 @@ export async function createCase(
     throw new Error("La selección de mensajes no es válida.");
   }
 
-  const [selectedMessages, contextMessages] = await Promise.all([
+  const [selectedMessages, contextMessages, session] = await Promise.all([
     prisma.message.findMany({
       where: {
         sessionId,
@@ -1227,7 +1283,18 @@ export async function createCase(
       },
       orderBy: { orderIndex: "asc" },
     }),
+    prisma.session.findUnique({
+      where: { id: sessionId },
+      select: {
+        projectId: true,
+        curationNotes: true,
+      },
+    }),
   ]);
+
+  if (!session || session.projectId !== projectId) {
+    throw new Error("La sesión no existe o no pertenece al proyecto indicado.");
+  }
 
   if (selectedMessages.length !== endOrderIndex - startOrderIndex + 1) {
     throw new Error("La selección debe ser consecutiva.");
@@ -1273,6 +1340,7 @@ export async function createCase(
       sourceMetadataJson: buildSourceMetadata({
         projectId,
         sessionId,
+        sessionNotes: session.curationNotes,
         selectedTurnIds: selectedMessages.map((message) => message.id),
         startOrderIndex,
         endOrderIndex,
@@ -1312,9 +1380,10 @@ export async function createCaseWithFeedback(
 
   let selectedMessages;
   let contextMessages;
+  let session;
 
   try {
-    [selectedMessages, contextMessages] = await Promise.all([
+    [selectedMessages, contextMessages, session] = await Promise.all([
       prisma.message.findMany({
         where: {
           sessionId,
@@ -1335,11 +1404,22 @@ export async function createCaseWithFeedback(
         },
         orderBy: { orderIndex: "asc" },
       }),
+      prisma.session.findUnique({
+        where: { id: sessionId },
+        select: {
+          projectId: true,
+          curationNotes: true,
+        },
+      }),
     ]);
   } catch (error) {
     return buildActionErrorState(
       getActionErrorMessage(error, "No fue posible cargar la selección del caso."),
     );
+  }
+
+  if (!session || session.projectId !== projectId) {
+    return buildActionErrorState("La sesión no existe o no pertenece al proyecto indicado.");
   }
 
   if (selectedMessages.length !== endOrderIndex - startOrderIndex + 1) {
@@ -1394,6 +1474,7 @@ export async function createCaseWithFeedback(
         sourceMetadataJson: buildSourceMetadata({
           projectId,
           sessionId,
+          sessionNotes: session.curationNotes,
           selectedTurnIds: selectedMessages.map((message) => message.id),
           startOrderIndex,
           endOrderIndex,

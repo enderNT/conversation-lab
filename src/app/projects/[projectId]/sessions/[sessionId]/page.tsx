@@ -125,6 +125,7 @@ export default async function SessionChatPage({
           chatConnectionVerifiedAt={session.chatConnectionVerifiedAt?.toISOString() ?? null}
           chatConnectionError={session.chatConnectionError}
           caseCount={session._count.cases}
+          curationNotes={session.curationNotes || ""}
           systemPrompt={session.systemPrompt || ""}
           recentCases={session.cases.map((caseItem) => ({
             id: caseItem.id,

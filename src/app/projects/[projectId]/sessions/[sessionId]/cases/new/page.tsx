@@ -114,6 +114,9 @@ export default async function NewCasePage({
         sourceMetadataJson={{
           project_id: projectId,
           session_id: sessionId,
+          ...(session.curationNotes?.trim()
+            ? { session_notes: session.curationNotes.trim() }
+            : {}),
           selected_turn_ids: session.messages.map((message) => message.id),
           selected_range: {
             start_order_index: start,

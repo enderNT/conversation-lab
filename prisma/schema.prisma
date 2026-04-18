@@ -109,6 +109,7 @@ model Session {
   id        String    @id @default(cuid())
   projectId String
   title     String?
+  curationNotes String?
   systemPrompt String?
   chatModel String?
   chatBaseUrl String?

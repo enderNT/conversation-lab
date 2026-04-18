@@ -9,6 +9,7 @@ import {
   deleteSession,
   sendSessionMessage,
   updateSessionChatModel,
+  updateSessionNotes,
   updateSessionSystemPrompt,
   verifySessionChatConnection,
 } from "@/app/actions";
@@ -84,6 +85,7 @@ type SessionSelectionProps = {
   chatConnectionVerifiedAt: string | null;
   chatConnectionError: string | null;
   caseCount: number;
+  curationNotes: string;
   systemPrompt: string;
 };
 
@@ -109,6 +111,7 @@ export function SessionSelection({
   chatConnectionVerifiedAt = null,
   chatConnectionError = null,
   caseCount = 0,
+  curationNotes = "",
   systemPrompt = "",
 }: SessionSelectionProps) {
   const router = useRouter();
@@ -122,17 +125,19 @@ export function SessionSelection({
   const [chatModelDraft, setChatModelDraft] = useState(chatModel);
   const [chatBaseUrlDraft, setChatBaseUrlDraft] = useState(chatBaseUrl);
   const [chatApiKeyDraft, setChatApiKeyDraft] = useState(chatApiKey);
+  const [curationNotesDraft, setCurationNotesDraft] = useState(curationNotes);
   const [systemPromptDraft, setSystemPromptDraft] = useState(systemPrompt);
   const [isSending, setIsSending] = useState(false);
   const [isSavingModel, setIsSavingModel] = useState(false);
   const [isSavingLlmConfiguration, setIsSavingLlmConfiguration] = useState(false);
   const [isTestingConnection, setIsTestingConnection] = useState(false);
   const [isSavingPrompt, setIsSavingPrompt] = useState(false);
+  const [isSavingNotes, setIsSavingNotes] = useState(false);
   const [isClearingChat, setIsClearingChat] = useState(false);
   const [isDeletingSession, setIsDeletingSession] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [activePanel, setActivePanel] = useState<"cases" | "settings" | "tags" | null>(null);
+  const [activePanel, setActivePanel] = useState<"cases" | "settings" | "tags" | "notes" | null>(null);
   const [contextTab, setContextTab] = useState<"selection" | "cases">("selection");
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
@@ -198,6 +203,10 @@ export function SessionSelection({
   useEffect(() => {
     setChatApiKeyDraft(chatApiKey);
   }, [chatApiKey]);
+
+  useEffect(() => {
+    setCurationNotesDraft(curationNotes);
+  }, [curationNotes]);
 
   useEffect(() => {
     setSystemPromptDraft(systemPrompt);
@@ -284,6 +293,7 @@ export function SessionSelection({
   const baseUrlIsDirty = normalizeDraftBaseUrl(chatBaseUrlDraft) !== normalizeDraftBaseUrl(chatBaseUrl);
   const apiKeyIsDirty = chatApiKeyDraft.trim() !== chatApiKey.trim();
   const chatSettingsAreDirty = modelIsDirty || baseUrlIsDirty || apiKeyIsDirty;
+  const notesAreDirty = curationNotesDraft.trim() !== curationNotes.trim();
   const promptIsDirty = systemPromptDraft.trim() !== systemPrompt.trim();
   const chatModelIsConfigured = chatModelDraft.trim().length > 0;
   const chatConnectionIsVerified = Boolean(chatConnectionVerifiedAt) && !chatConnectionError;
@@ -338,6 +348,13 @@ export function SessionSelection({
   function openTagsPanel() {
     setHistoryOpen(false);
     setActivePanel("tags");
+    setHeaderMenuOpen(false);
+    setToolsOpen(false);
+  }
+
+  function openNotesPanel() {
+    setHistoryOpen(false);
+    setActivePanel("notes");
     setHeaderMenuOpen(false);
     setToolsOpen(false);
   }
@@ -636,6 +653,52 @@ export function SessionSelection({
     }
   }
 
+  async function handleSaveNotes() {
+    if (isSavingNotes) {
+      return;
+    }
+
+    setIsSavingNotes(true);
+
+    try {
+      const result = await updateSessionNotes(projectId, sessionId, {
+        curationNotes: curationNotesDraft,
+      });
+
+      if (!result.ok) {
+        pushToast({
+          title: "No fue posible guardar las notas",
+          description: result.error,
+          variant: "error",
+          durationMs: 7000,
+        });
+        return;
+      }
+
+      pushToast({
+        title: curationNotesDraft.trim() ? "Notas guardadas" : "Notas eliminadas",
+        description: curationNotesDraft.trim()
+          ? "Estas notas quedarán disponibles cuando conviertas la conversación en caso."
+          : "La sesión ya no tiene notas adicionales para curación.",
+        variant: "success",
+        durationMs: 5000,
+      });
+
+      startTransition(() => {
+        router.refresh();
+      });
+    } catch {
+      pushToast({
+        title: "No fue posible guardar las notas",
+        description: "No fue posible actualizar las notas del chat.",
+        variant: "error",
+        durationMs: 7000,
+      });
+    } finally {
+      setIsSavingNotes(false);
+    }
+  }
+
   async function handleClearChat() {
     if (isClearingChat || messages.length === 0) {
       return;
@@ -843,6 +906,14 @@ export function SessionSelection({
                     >
                       <span>Configuración LLM</span>
                       <span className="text-[var(--muted)]">Abrir modal</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="mt-1 flex w-full items-center justify-between rounded-[1rem] px-3 py-3 text-left text-sm font-medium transition hover:bg-black/5"
+                      onClick={openNotesPanel}
+                    >
+                      <span>Notas del chat</span>
+                      <span className="text-[var(--muted)]">Abrir panel</span>
                     </button>
                     <button
                       type="button"
@@ -1231,6 +1302,49 @@ export function SessionSelection({
           </div>
         </div>
       </ChatHistoryDrawer>
+
+      <SideDrawer
+        open={activePanel === "notes"}
+        title="Notas del chat"
+        description="Guarda contexto libre de esta sesión para reutilizarlo después durante la curación del caso."
+        onClose={() => setActivePanel(null)}
+      >
+        <div className="space-y-5">
+          <div className="rounded-[1.5rem] border border-[var(--line)] bg-white/65 p-4">
+            <p className="text-xs uppercase tracking-[0.18em] text-[var(--muted)]">Uso</p>
+            <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
+              Estas notas viven solo en este chat y aparecerán en el paso <span className="font-semibold text-[var(--foreground)]">Source</span> cuando crees un caso desde esta conversación.
+            </p>
+          </div>
+
+          <label className="block space-y-2">
+            <FormLabel>Notas para curación</FormLabel>
+            <textarea
+              className="field min-h-48"
+              value={curationNotesDraft}
+              onChange={(event) => setCurationNotesDraft(event.target.value)}
+              placeholder="Añade contexto, criterios, decisiones o recordatorios útiles para cuando esta sesión pase al pipeline de curación."
+              disabled={isSavingNotes}
+            />
+          </label>
+
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm text-[var(--muted)]">
+              Son opcionales y no cambian el transcript del chat.
+            </p>
+            <button
+              type="button"
+              className="button-secondary"
+              onClick={() => {
+                void handleSaveNotes();
+              }}
+              disabled={isSavingNotes || !notesAreDirty}
+            >
+              {isSavingNotes ? "Guardando notas..." : "Guardar notas"}
+            </button>
+          </div>
+        </div>
+      </SideDrawer>
 
       <SideDrawer
         open={activePanel === "tags"}

@@ -953,6 +953,17 @@ export function CaseEditorForm({
                 Range {sourceMetadata.selected_range.start_order_index + 1} to {sourceMetadata.selected_range.end_order_index + 1} • {sourceMetadata.selected_range.turn_count} turn(s)
               </div>
 
+              {sourceMetadata.session_notes?.trim() ? (
+                <div className="mt-4 rounded-[1rem] border border-[rgba(15,95,92,0.18)] bg-[rgba(15,95,92,0.06)] px-4 py-4">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--accent-strong)]">
+                    Session notes
+                  </p>
+                  <p className="mt-2 whitespace-pre-wrap text-sm leading-7 text-[var(--muted-strong)]">
+                    {sourceMetadata.session_notes}
+                  </p>
+                </div>
+              ) : null}
+
               <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
                 <label className="block space-y-2">
                   <span className="text-sm font-medium">Case title</span>
