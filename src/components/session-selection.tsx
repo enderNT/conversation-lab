@@ -98,6 +98,7 @@ export function SessionSelection({
   const [anchorIndex, setAnchorIndex] = useState<number | null>(null);
   const [focusIndex, setFocusIndex] = useState<number | null>(null);
   const [draft, setDraft] = useState("");
+  const [pendingUserMessage, setPendingUserMessage] = useState<string | null>(null);
   const [chatModelDraft, setChatModelDraft] = useState(chatModel);
   const [chatBaseUrlDraft, setChatBaseUrlDraft] = useState(chatBaseUrl);
   const [chatApiKeyDraft, setChatApiKeyDraft] = useState(chatApiKey);
@@ -142,6 +143,18 @@ export function SessionSelection({
     ? `/projects/${projectId}/sessions/${sessionId}/cases/new?start=${selectionRange.start}&end=${selectionRange.end}`
     : "#";
   const caseLibraryHref = `/cases?projectId=${projectId}`;
+  const displayedMessages = pendingUserMessage
+    ? [
+        ...messages,
+        {
+          id: "__pending-user-message__",
+          role: "user" as const,
+          text: pendingUserMessage,
+          orderIndex: messages.length > 0 ? messages[messages.length - 1]!.orderIndex + 1 : 0,
+          createdAt: new Date().toISOString(),
+        },
+      ]
+    : messages;
 
   useEffect(() => {
     const container = messagesRef.current;
@@ -318,11 +331,15 @@ export function SessionSelection({
 
     setIsSending(true);
     setErrorMessage(null);
+    setPendingUserMessage(text);
+    setDraft("");
 
     try {
       const result = await sendSessionMessage(projectId, sessionId, { text });
 
       if (!result.ok) {
+        setDraft(text);
+        setPendingUserMessage(null);
         setErrorMessage(result.error);
         pushToast({
           title: "No fue posible enviar el mensaje",
@@ -333,7 +350,7 @@ export function SessionSelection({
         return;
       }
 
-      setDraft("");
+      setPendingUserMessage(null);
       pushToast({
         title: "Mensaje enviado",
         description: "La conversación se actualizó correctamente.",
@@ -345,6 +362,8 @@ export function SessionSelection({
         router.refresh();
       });
     } catch {
+      setDraft(text);
+      setPendingUserMessage(null);
       setErrorMessage("No fue posible enviar el mensaje al modelo.");
       pushToast({
         title: "No fue posible enviar el mensaje",
@@ -799,13 +818,13 @@ export function SessionSelection({
             ref={messagesRef}
             className="flex h-full min-w-0 w-full flex-col gap-4 overflow-y-auto px-4 py-6 sm:px-6 lg:px-8"
           >
-            {messages.length === 0 ? (
+            {displayedMessages.length === 0 ? (
               <div className="theme-soft-surface mx-auto flex min-h-full w-full max-w-3xl flex-1 items-center justify-center rounded-[2rem] border border-dashed border-[var(--line)] px-6 py-16 text-center text-sm leading-7 text-[var(--muted)]">
                 Esta sesión todavía no tiene conversación. Configura el modelo si hace falta y envía el primer mensaje desde el compositor inferior.
               </div>
             ) : null}
 
-            {messages.map((message) => {
+            {displayedMessages.map((message) => {
               const isSelected =
                 selectionRange !== null &&
                 message.orderIndex >= selectionRange.start &&
@@ -863,6 +882,27 @@ export function SessionSelection({
                 </div>
               );
             })}
+
+            {isSending ? (
+              <div className="flex w-full justify-start">
+                <div className="relative w-full max-w-3xl rounded-[1.75rem] border border-[var(--line)] bg-[var(--assistant-bubble)] px-4 py-4 shadow-[0_12px_32px_rgba(15,23,42,0.06)] sm:px-5">
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-3 text-xs uppercase tracking-[0.18em] text-[var(--muted)]">
+                    <div className="flex items-center gap-2">
+                      <span className="rounded-full bg-[rgba(15,95,92,0.12)] px-2.5 py-1 text-[10px] font-semibold text-[var(--accent-strong)]">
+                        Asistente
+                      </span>
+                      <span>Escribiendo</span>
+                    </div>
+                  </div>
+
+                  <div className="typing-indicator" aria-label="Asistente escribiendo" role="status">
+                    <span className="typing-dot" />
+                    <span className="typing-dot" />
+                    <span className="typing-dot" />
+                  </div>
+                </div>
+              </div>
+            ) : null}
           </div>
         </div>
 
