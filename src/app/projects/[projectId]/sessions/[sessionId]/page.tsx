@@ -88,6 +88,7 @@ export default async function SessionChatPage({
             chatModel: configuration.chatModel,
             chatBaseUrl: configuration.chatBaseUrl || "",
             chatApiKey: configuration.chatApiKey || "",
+            systemPrompt: configuration.systemPrompt || "",
           }))}
           chatConnectionCheckedAt={session.chatConnectionCheckedAt?.toISOString() ?? null}
           chatConnectionVerifiedAt={session.chatConnectionVerifiedAt?.toISOString() ?? null}

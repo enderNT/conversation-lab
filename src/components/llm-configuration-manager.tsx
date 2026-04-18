@@ -18,6 +18,7 @@ type LlmConfigurationItem = {
   chatModel: string;
   chatBaseUrl: string;
   chatApiKey: string;
+  systemPrompt: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -39,19 +40,7 @@ export function LlmConfigurationManager({
 
   return (
     <section className="space-y-6">
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_380px]">
-        <div className="surface rounded-[1.75rem] p-5 sm:p-6">
-          <p className="text-sm uppercase tracking-[0.22em] text-[var(--muted)]">
-            Configuraciones LLM
-          </p>
-          <h2 className="mt-3 text-3xl font-semibold tracking-tight text-[var(--foreground)]">
-            Reutiliza modelos, URLs y credenciales en cualquier proyecto.
-          </h2>
-          <p className="mt-4 max-w-3xl text-sm leading-7 text-[var(--muted)]">
-            Aquí administras la biblioteca global. Desde el chat solo podrás cargar una configuración guardada al borrador o guardar la configuración actual como nueva.
-          </p>
-        </div>
-
+      <div className="grid gap-6 lg:grid-cols-[380px_minmax(0,1fr)]">
         <form action={createAction} className="surface rounded-[1.75rem] p-5 sm:p-6">
           <h3 className="text-lg font-semibold">Nueva configuración</h3>
           <div className="mt-4 space-y-4">
@@ -71,11 +60,31 @@ export function LlmConfigurationManager({
               <FormLabel>Chat API key</FormLabel>
               <input name="chatApiKey" type="password" className="field mono" placeholder="Bearer token opcional" />
             </label>
+            <label className="block space-y-2">
+              <FormLabel>Behavior prompt</FormLabel>
+              <textarea
+                name="systemPrompt"
+                className="field min-h-28"
+                placeholder="Prompt opcional para reutilizar junto con esta configuración."
+              />
+            </label>
             <FormSubmitButton type="submit" className="button-primary w-full" pendingLabel="Guardando configuración...">
               Guardar configuración
             </FormSubmitButton>
           </div>
         </form>
+
+        <div className="surface rounded-[1.75rem] p-5 sm:p-6">
+          <p className="text-sm uppercase tracking-[0.22em] text-[var(--muted)]">
+            Configuraciones LLM
+          </p>
+          <h2 className="mt-3 text-3xl font-semibold tracking-tight text-[var(--foreground)]">
+            Biblioteca global reutilizable.
+          </h2>
+          <p className="mt-4 max-w-3xl text-sm leading-7 text-[var(--muted)]">
+            Crea, actualiza o elimina configuraciones para reutilizarlas luego desde cualquier chat del sistema.
+          </p>
+        </div>
       </div>
 
       <div className="grid gap-4 xl:grid-cols-2">
@@ -102,6 +111,7 @@ function EditableLlmConfigurationCard({
   const [chatModel, setChatModel] = useState(configuration.chatModel);
   const [chatBaseUrl, setChatBaseUrl] = useState(configuration.chatBaseUrl);
   const [chatApiKey, setChatApiKey] = useState(configuration.chatApiKey);
+  const [systemPrompt, setSystemPrompt] = useState(configuration.systemPrompt);
   const [updateState, updateAction] = useActionState(
     updateLlmConfigurationWithFeedback.bind(null, configuration.id),
     EMPTY_ACTION_FORM_STATE,
@@ -135,6 +145,9 @@ function EditableLlmConfigurationCard({
           </span>
           <span className="rounded-full border border-[var(--line)] bg-white/70 px-3 py-1">
             API key {configuration.chatApiKey ? "configurada" : "vacía"}
+          </span>
+          <span className="rounded-full border border-[var(--line)] bg-white/70 px-3 py-1">
+            Prompt {configuration.systemPrompt ? "configurado" : "vacío"}
           </span>
         </div>
       </div>
@@ -171,6 +184,15 @@ function EditableLlmConfigurationCard({
             className="field mono"
             value={chatApiKey}
             onChange={(event) => setChatApiKey(event.target.value)}
+          />
+        </label>
+        <label className="block space-y-2">
+          <FormLabel>Behavior prompt</FormLabel>
+          <textarea
+            name="systemPrompt"
+            className="field min-h-28"
+            value={systemPrompt}
+            onChange={(event) => setSystemPrompt(event.target.value)}
           />
         </label>
 

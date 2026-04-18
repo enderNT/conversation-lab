@@ -88,6 +88,7 @@ export default async function ProjectsPage() {
           chatModel: configuration.chatModel,
           chatBaseUrl: configuration.chatBaseUrl || "",
           chatApiKey: configuration.chatApiKey || "",
+          systemPrompt: configuration.systemPrompt || "",
           createdAt: configuration.createdAt.toISOString(),
           updatedAt: configuration.updatedAt.toISOString(),
         }))}

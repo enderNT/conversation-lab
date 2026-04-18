@@ -47,6 +47,7 @@ type SavedLlmConfiguration = {
   chatModel: string;
   chatBaseUrl: string;
   chatApiKey: string;
+  systemPrompt: string;
 };
 
 type ConfirmState =
@@ -357,9 +358,15 @@ export function SessionSelection({
     setChatBaseUrlDraft(selectedConfiguration.chatBaseUrl);
     setChatApiKeyDraft(selectedConfiguration.chatApiKey);
 
+    if (selectedConfiguration.systemPrompt.trim()) {
+      setSystemPromptDraft(selectedConfiguration.systemPrompt);
+    }
+
     pushToast({
       title: "Configuración cargada",
-      description: `Se cargó "${selectedConfiguration.name}" en el borrador de la sesión.`,
+      description: selectedConfiguration.systemPrompt.trim()
+        ? `Se cargó "${selectedConfiguration.name}" con su prompt en el borrador de la sesión.`
+        : `Se cargó "${selectedConfiguration.name}" en el borrador de la sesión.`,
       variant: "success",
       durationMs: 5000,
     });
@@ -380,6 +387,7 @@ export function SessionSelection({
         chatModel: chatModelDraft,
         chatBaseUrl: chatBaseUrlDraft,
         chatApiKey: chatApiKeyDraft,
+        systemPrompt: systemPromptDraft,
       });
 
       if (!result.ok) {
@@ -1375,7 +1383,7 @@ export function SessionSelection({
                 </select>
               </label>
               <p className="text-sm text-[var(--muted)]">
-                La selección carga modelo, URL y API key al borrador actual. Después puedes guardar y probar la sesión como siempre.
+                La selección carga modelo, URL y API key al borrador actual. Si la configuración trae prompt, también lo aplica.
               </p>
             </div>
             <div className="flex items-end">
@@ -1403,7 +1411,7 @@ export function SessionSelection({
                 />
               </label>
               <p className="text-sm text-[var(--muted)]">
-                Esto guarda el modelo, la URL y la API key del borrador actual para reutilizarlos en cualquier proyecto.
+                Esto guarda el modelo, la URL, la API key y el prompt del borrador actual para reutilizarlos en cualquier proyecto.
               </p>
             </div>
             <div className="flex items-end">

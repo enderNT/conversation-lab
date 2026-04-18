@@ -61,6 +61,7 @@ const llmConfigurationSchema = z.object({
   chatModel: z.string().trim().min(1, "Define un modelo para la configuración."),
   chatBaseUrl: z.string().default(""),
   chatApiKey: z.string().default(""),
+  systemPrompt: z.string().default(""),
 });
 
 const caseSchema = z.object({
@@ -252,6 +253,7 @@ function normalizeLlmConfigurationInput(input: z.infer<typeof llmConfigurationSc
     chatModel: input.chatModel.trim(),
     chatBaseUrl: normalizeChatBaseUrl(input.chatBaseUrl),
     chatApiKey: input.chatApiKey.trim() || null,
+    systemPrompt: input.systemPrompt.trim() || null,
   };
 }
 
@@ -365,6 +367,7 @@ export async function createLlmConfigurationWithFeedback(
     chatModel: asOptionalString(formData.get("chatModel")),
     chatBaseUrl: asOptionalString(formData.get("chatBaseUrl")),
     chatApiKey: asOptionalString(formData.get("chatApiKey")),
+    systemPrompt: asOptionalString(formData.get("systemPrompt")),
   });
 
   if (!parsed.success) {
@@ -400,6 +403,7 @@ export async function updateLlmConfigurationWithFeedback(
     chatModel: asOptionalString(formData.get("chatModel")),
     chatBaseUrl: asOptionalString(formData.get("chatBaseUrl")),
     chatApiKey: asOptionalString(formData.get("chatApiKey")),
+    systemPrompt: asOptionalString(formData.get("systemPrompt")),
   });
 
   if (!parsed.success) {
@@ -452,12 +456,14 @@ export async function createLlmConfiguration(input: {
   chatModel: string;
   chatBaseUrl: string;
   chatApiKey: string;
+  systemPrompt: string;
 }) {
   const parsed = llmConfigurationSchema.parse({
     name: input.name,
     chatModel: input.chatModel,
     chatBaseUrl: input.chatBaseUrl,
     chatApiKey: input.chatApiKey,
+    systemPrompt: input.systemPrompt,
   });
 
   try {
