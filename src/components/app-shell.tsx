@@ -35,6 +35,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 <Link href="/tasks" className="button-secondary">
                   Task Catalog
                 </Link>
+                <Link href="/session-tags" className="button-secondary">
+                  Session Tags
+                </Link>
                 <Link href="/exports" className="button-secondary">
                   Export Hub
                 </Link>

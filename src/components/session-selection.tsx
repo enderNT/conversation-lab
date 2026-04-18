@@ -13,6 +13,7 @@ import {
   verifySessionChatConnection,
 } from "@/app/actions";
 import { FormLabel } from "@/components/form-label";
+import { SessionTagPicker } from "@/components/session-tag-picker";
 import { StatusBadge } from "@/components/status-badge";
 import { useToast } from "@/components/toast-provider";
 import { cn, formatDate } from "@/lib/utils";
@@ -39,6 +40,7 @@ type SessionHistoryPreview = {
   createdAt: string;
   messageCount: number;
   caseCount: number;
+  tags: Array<{ id: string; name: string }>;
 };
 
 type SavedLlmConfiguration = {
@@ -66,6 +68,8 @@ type SessionSelectionProps = {
   projectName: string;
   sessionCreatedAt: string;
   sessionHistory: SessionHistoryPreview[];
+  sessionTags: Array<{ id: string; name: string }>;
+  availableSessionTags: Array<{ id: string; name: string }>;
   messages: SelectableMessage[];
   recentCases: SessionCasePreview[];
   savedLlmConfigurations: SavedLlmConfiguration[];
@@ -89,6 +93,8 @@ export function SessionSelection({
   projectName = "",
   sessionCreatedAt,
   sessionHistory = [],
+  sessionTags = [],
+  availableSessionTags = [],
   messages = [],
   recentCases = [],
   savedLlmConfigurations = [],
@@ -126,7 +132,7 @@ export function SessionSelection({
   const [isDeletingSession, setIsDeletingSession] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [activePanel, setActivePanel] = useState<"cases" | "settings" | null>(null);
+  const [activePanel, setActivePanel] = useState<"cases" | "settings" | "tags" | null>(null);
   const [contextTab, setContextTab] = useState<"selection" | "cases">("selection");
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
@@ -325,6 +331,13 @@ export function SessionSelection({
   function openSettingsPanel() {
     setHistoryOpen(false);
     setActivePanel("settings");
+    setHeaderMenuOpen(false);
+    setToolsOpen(false);
+  }
+
+  function openTagsPanel() {
+    setHistoryOpen(false);
+    setActivePanel("tags");
     setHeaderMenuOpen(false);
     setToolsOpen(false);
   }
@@ -834,6 +847,14 @@ export function SessionSelection({
                     <button
                       type="button"
                       className="mt-1 flex w-full items-center justify-between rounded-[1rem] px-3 py-3 text-left text-sm font-medium transition hover:bg-black/5"
+                      onClick={openTagsPanel}
+                    >
+                      <span>Etiquetas del chat</span>
+                      <span className="text-[var(--muted)]">Abrir panel</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="mt-1 flex w-full items-center justify-between rounded-[1rem] px-3 py-3 text-left text-sm font-medium transition hover:bg-black/5"
                       onClick={() => setToolsOpen((currentValue) => !currentValue)}
                       aria-expanded={toolsOpen}
                     >
@@ -1173,6 +1194,14 @@ export function SessionSelection({
                     <span className="rounded-full border border-[var(--line)] bg-white/80 px-2.5 py-1">
                       {historyItem.caseCount} caso(s)
                     </span>
+                    {historyItem.tags.map((tag) => (
+                      <span
+                        key={tag.id}
+                        className="rounded-full border border-[var(--line)] bg-white/80 px-2.5 py-1"
+                      >
+                        #{tag.name}
+                      </span>
+                    ))}
                   </div>
                 </>
               );
@@ -1202,6 +1231,33 @@ export function SessionSelection({
           </div>
         </div>
       </ChatHistoryDrawer>
+
+      <SideDrawer
+        open={activePanel === "tags"}
+        title="Etiquetas del chat"
+        description="Asigna etiquetas existentes, crea nuevas rápidamente y usa la taxonomía global sin salir del chat."
+        onClose={() => setActivePanel(null)}
+      >
+        <div className="space-y-5">
+          <div className="rounded-[1.5rem] border border-[var(--line)] bg-white/65 p-4">
+            <p className="text-xs uppercase tracking-[0.18em] text-[var(--muted)]">Sesión actual</p>
+            <p className="mt-2 text-lg font-semibold text-[var(--foreground)]">
+              {projectName}
+            </p>
+            <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
+              Usa etiquetas para clasificar este chat y encontrarlo más rápido después.
+            </p>
+          </div>
+
+          <SessionTagPicker
+            projectId={projectId}
+            sessionId={sessionId}
+            assignedTags={sessionTags}
+            availableTags={availableSessionTags}
+            showManageLink
+          />
+        </div>
+      </SideDrawer>
 
       <SideDrawer
         open={activePanel === "cases"}

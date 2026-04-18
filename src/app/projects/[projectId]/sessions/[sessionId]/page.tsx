@@ -12,11 +12,19 @@ export default async function SessionChatPage({
 }) {
   const { projectId, sessionId } = await params;
 
-  const [session, projectSessions, llmConfigurations] = await Promise.all([
+  const [session, projectSessions, llmConfigurations, sessionTags] = await Promise.all([
     prisma.session.findUnique({
       where: { id: sessionId },
       include: {
         project: true,
+        tags: {
+          include: {
+            tag: true,
+          },
+          orderBy: {
+            createdAt: "asc",
+          },
+        },
         _count: {
           select: {
             cases: true,
@@ -35,6 +43,14 @@ export default async function SessionChatPage({
       where: { projectId },
       orderBy: { createdAt: "desc" },
       include: {
+        tags: {
+          include: {
+            tag: true,
+          },
+          orderBy: {
+            createdAt: "asc",
+          },
+        },
         _count: {
           select: {
             messages: true,
@@ -45,6 +61,9 @@ export default async function SessionChatPage({
     }),
     prisma.llmConfiguration.findMany({
       orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
+    }),
+    prisma.sessionTag.findMany({
+      orderBy: { name: "asc" },
     }),
   ]);
 
@@ -74,6 +93,18 @@ export default async function SessionChatPage({
             createdAt: projectSession.createdAt.toISOString(),
             messageCount: projectSession._count.messages,
             caseCount: projectSession._count.cases,
+            tags: projectSession.tags.map((assignment) => ({
+              id: assignment.tag.id,
+              name: assignment.tag.name,
+            })),
+          }))}
+          sessionTags={session.tags.map((assignment) => ({
+            id: assignment.tag.id,
+            name: assignment.tag.name,
+          }))}
+          availableSessionTags={sessionTags.map((tag) => ({
+            id: tag.id,
+            name: tag.name,
           }))}
           chatRuntimeEnabled={chatRuntime.enabled}
           chatRuntimeDisabledReason={chatRuntime.disabledReason}

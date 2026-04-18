@@ -64,6 +64,10 @@ const llmConfigurationSchema = z.object({
   systemPrompt: z.string().default(""),
 });
 
+const sessionTagSchema = z.object({
+  name: z.string().trim().min(1, "Asigna un nombre para la etiqueta."),
+});
+
 const caseSchema = z.object({
   title: z.string().trim().optional().default(""),
   sourceSummary: z.string().trim().default(""),
@@ -483,6 +487,261 @@ export async function createLlmConfiguration(input: {
   }
 
   revalidatePath("/");
+
+  return {
+    ok: true as const,
+  };
+}
+
+export async function createSessionTagWithFeedback(
+  _previousState: ActionFormState,
+  formData: FormData,
+) {
+  const parsed = sessionTagSchema.safeParse({
+    name: asOptionalString(formData.get("name")),
+  });
+
+  if (!parsed.success) {
+    return buildActionErrorState(
+      getActionErrorMessage(parsed.error, "No fue posible guardar la etiqueta."),
+    );
+  }
+
+  try {
+    await prisma.sessionTag.create({
+      data: {
+        name: parsed.data.name.trim(),
+      },
+    });
+  } catch (error) {
+    return buildActionErrorState(
+      getActionErrorMessage(error, "No fue posible guardar la etiqueta."),
+    );
+  }
+
+  revalidatePath("/session-tags");
+
+  return buildActionRefreshSuccessState("Etiqueta guardada correctamente.");
+}
+
+export async function updateSessionTagWithFeedback(
+  tagId: string,
+  _previousState: ActionFormState,
+  formData: FormData,
+) {
+  const parsed = sessionTagSchema.safeParse({
+    name: asOptionalString(formData.get("name")),
+  });
+
+  if (!parsed.success) {
+    return buildActionErrorState(
+      getActionErrorMessage(parsed.error, "No fue posible actualizar la etiqueta."),
+    );
+  }
+
+  try {
+    await prisma.sessionTag.update({
+      where: { id: tagId },
+      data: {
+        name: parsed.data.name.trim(),
+      },
+    });
+  } catch (error) {
+    return buildActionErrorState(
+      getActionErrorMessage(error, "No fue posible actualizar la etiqueta."),
+    );
+  }
+
+  revalidatePath("/session-tags");
+
+  return buildActionRefreshSuccessState("Etiqueta actualizada correctamente.");
+}
+
+export async function deleteSessionTagWithFeedback(
+  tagId: string,
+  _previousState: ActionFormState,
+) {
+  void _previousState;
+
+  try {
+    await prisma.sessionTag.delete({
+      where: { id: tagId },
+    });
+  } catch (error) {
+    return buildActionErrorState(
+      getActionErrorMessage(error, "No fue posible eliminar la etiqueta."),
+    );
+  }
+
+  revalidatePath("/session-tags");
+  revalidatePath("/");
+
+  return buildActionRefreshSuccessState("Etiqueta eliminada correctamente.");
+}
+
+export async function assignSessionTagToSession(
+  projectId: string,
+  sessionId: string,
+  tagId: string,
+) {
+  const session = await prisma.session.findUnique({
+    where: { id: sessionId },
+    select: {
+      id: true,
+      projectId: true,
+    },
+  });
+
+  if (!session || session.projectId !== projectId) {
+    return {
+      ok: false as const,
+      error: "La sesión no existe o no pertenece al proyecto indicado.",
+    };
+  }
+
+  try {
+    await prisma.sessionTagOnSession.upsert({
+      where: {
+        sessionId_tagId: {
+          sessionId,
+          tagId,
+        },
+      },
+      update: {},
+      create: {
+        sessionId,
+        tagId,
+      },
+    });
+  } catch (error) {
+    return {
+      ok: false as const,
+      error:
+        error instanceof Error
+          ? error.message
+          : "No fue posible asignar la etiqueta a la sesión.",
+    };
+  }
+
+  revalidatePath(`/projects/${projectId}`);
+  revalidatePath(`/projects/${projectId}/sessions/${sessionId}`);
+
+  return {
+    ok: true as const,
+  };
+}
+
+export async function removeSessionTagFromSession(
+  projectId: string,
+  sessionId: string,
+  tagId: string,
+) {
+  const session = await prisma.session.findUnique({
+    where: { id: sessionId },
+    select: {
+      id: true,
+      projectId: true,
+    },
+  });
+
+  if (!session || session.projectId !== projectId) {
+    return {
+      ok: false as const,
+      error: "La sesión no existe o no pertenece al proyecto indicado.",
+    };
+  }
+
+  try {
+    await prisma.sessionTagOnSession.delete({
+      where: {
+        sessionId_tagId: {
+          sessionId,
+          tagId,
+        },
+      },
+    });
+  } catch (error) {
+    return {
+      ok: false as const,
+      error:
+        error instanceof Error
+          ? error.message
+          : "No fue posible remover la etiqueta de la sesión.",
+    };
+  }
+
+  revalidatePath(`/projects/${projectId}`);
+  revalidatePath(`/projects/${projectId}/sessions/${sessionId}`);
+
+  return {
+    ok: true as const,
+  };
+}
+
+export async function createSessionTagAndAssign(
+  projectId: string,
+  sessionId: string,
+  input: { name: string },
+) {
+  const parsed = sessionTagSchema.parse({
+    name: input.name,
+  });
+
+  const session = await prisma.session.findUnique({
+    where: { id: sessionId },
+    select: {
+      id: true,
+      projectId: true,
+    },
+  });
+
+  if (!session || session.projectId !== projectId) {
+    return {
+      ok: false as const,
+      error: "La sesión no existe o no pertenece al proyecto indicado.",
+    };
+  }
+
+  try {
+    const normalizedName = parsed.name.trim();
+    let tag = await prisma.sessionTag.findUnique({
+      where: { name: normalizedName },
+      select: { id: true, name: true },
+    });
+
+    if (!tag) {
+      tag = await prisma.sessionTag.create({
+        data: { name: normalizedName },
+        select: { id: true, name: true },
+      });
+    }
+
+    await prisma.sessionTagOnSession.upsert({
+      where: {
+        sessionId_tagId: {
+          sessionId,
+          tagId: tag.id,
+        },
+      },
+      update: {},
+      create: {
+        sessionId,
+        tagId: tag.id,
+      },
+    });
+  } catch (error) {
+    return {
+      ok: false as const,
+      error:
+        error instanceof Error
+          ? error.message
+          : "No fue posible crear o asignar la etiqueta.",
+    };
+  }
+
+  revalidatePath(`/projects/${projectId}`);
+  revalidatePath(`/projects/${projectId}/sessions/${sessionId}`);
+  revalidatePath("/session-tags");
 
   return {
     ok: true as const,

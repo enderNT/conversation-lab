@@ -95,6 +95,16 @@ model LlmConfiguration {
   @@index([createdAt])
 }
 
+model SessionTag {
+  id          String             @id @default(cuid())
+  name        String             @unique
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+  sessions    SessionTagOnSession[]
+
+  @@index([createdAt])
+}
+
 model Session {
   id        String    @id @default(cuid())
   projectId String
@@ -110,8 +120,20 @@ model Session {
   project   Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
   messages  Message[]
   cases     Case[]
+  tags      SessionTagOnSession[]
 
   @@index([projectId, createdAt])
+}
+
+model SessionTagOnSession {
+  sessionId String
+  tagId     String
+  createdAt DateTime @default(now())
+  session   Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  tag       SessionTag @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([sessionId, tagId])
+  @@index([tagId, createdAt])
 }
 
 model Message {

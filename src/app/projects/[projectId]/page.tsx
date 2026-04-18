@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { ProjectSessionCard } from "@/components/project-session-card";
 import { SessionCreateForm } from "@/components/session-create-form";
 import { prisma } from "@/lib/prisma";
 import { formatDate } from "@/lib/utils";
@@ -19,6 +20,14 @@ export default async function ProjectDetailPage({
       sessions: {
         orderBy: { createdAt: "desc" },
         include: {
+          tags: {
+            include: {
+              tag: true,
+            },
+            orderBy: {
+              createdAt: "asc",
+            },
+          },
           _count: {
             select: {
               messages: true,
@@ -34,6 +43,9 @@ export default async function ProjectDetailPage({
         },
       },
     },
+  });
+  const sessionTags = await prisma.sessionTag.findMany({
+    orderBy: { name: "asc" },
   });
 
   if (!project) {
@@ -93,35 +105,26 @@ export default async function ProjectDetailPage({
 
         <div className="grid gap-4 lg:grid-cols-2">
           {project.sessions.map((session, index) => (
-            <article key={session.id} className="surface rounded-[1.75rem] p-5 sm:p-6">
-              <p className="text-xs uppercase tracking-[0.18em] text-[var(--muted)]">
-                Session {index + 1}
-              </p>
-              <h3 className="mt-3 text-xl font-semibold">
-                {session.title || `Untitled session ${index + 1}`}
-              </h3>
-              <p className="mt-2 text-sm text-[var(--muted)]">
-                {formatDate(session.createdAt)}
-              </p>
-
-              <div className="mt-5 grid grid-cols-2 gap-3 text-sm">
-                <div className="rounded-2xl border border-[var(--line)] bg-white/65 p-3">
-                  <p className="text-[var(--muted)]">Messages</p>
-                  <p className="mt-2 text-2xl font-semibold">{session._count.messages}</p>
-                </div>
-                <div className="rounded-2xl border border-[var(--line)] bg-white/65 p-3">
-                  <p className="text-[var(--muted)]">Cases</p>
-                  <p className="mt-2 text-2xl font-semibold">{session._count.cases}</p>
-                </div>
-              </div>
-
-              <Link
-                href={`/projects/${project.id}/sessions/${session.id}`}
-                className="button-primary mt-5 inline-flex"
-              >
-                Open Session
-              </Link>
-            </article>
+            <ProjectSessionCard
+              key={session.id}
+              projectId={project.id}
+              index={index}
+              availableTags={sessionTags.map((tag) => ({
+                id: tag.id,
+                name: tag.name,
+              }))}
+              session={{
+                id: session.id,
+                title: session.title || "",
+                createdAt: session.createdAt.toISOString(),
+                messageCount: session._count.messages,
+                caseCount: session._count.cases,
+                tags: session.tags.map((assignment) => ({
+                  id: assignment.tag.id,
+                  name: assignment.tag.name,
+                })),
+              }}
+            />
           ))}
         </div>
       </section>
