@@ -63,6 +63,7 @@ type SessionSelectionProps = {
   chatRuntimeDisabledReason: string | null;
   chatProviderLabel: string;
   chatBaseUrl: string;
+  chatApiKey: string;
   chatResolvedBaseUrl: string | null;
   chatConnectionCheckedAt: string | null;
   chatConnectionVerifiedAt: string | null;
@@ -84,6 +85,7 @@ export function SessionSelection({
   chatRuntimeDisabledReason = null,
   chatProviderLabel = "",
   chatBaseUrl = "",
+  chatApiKey = "",
   chatResolvedBaseUrl = null,
   chatConnectionCheckedAt = null,
   chatConnectionVerifiedAt = null,
@@ -98,6 +100,7 @@ export function SessionSelection({
   const [draft, setDraft] = useState("");
   const [chatModelDraft, setChatModelDraft] = useState(chatModel);
   const [chatBaseUrlDraft, setChatBaseUrlDraft] = useState(chatBaseUrl);
+  const [chatApiKeyDraft, setChatApiKeyDraft] = useState(chatApiKey);
   const [systemPromptDraft, setSystemPromptDraft] = useState(systemPrompt);
   const [isSending, setIsSending] = useState(false);
   const [isSavingModel, setIsSavingModel] = useState(false);
@@ -157,6 +160,10 @@ export function SessionSelection({
   useEffect(() => {
     setChatBaseUrlDraft(chatBaseUrl);
   }, [chatBaseUrl]);
+
+  useEffect(() => {
+    setChatApiKeyDraft(chatApiKey);
+  }, [chatApiKey]);
 
   useEffect(() => {
     setSystemPromptDraft(systemPrompt);
@@ -241,7 +248,8 @@ export function SessionSelection({
 
   const modelIsDirty = chatModelDraft.trim() !== chatModel.trim();
   const baseUrlIsDirty = normalizeDraftBaseUrl(chatBaseUrlDraft) !== normalizeDraftBaseUrl(chatBaseUrl);
-  const chatSettingsAreDirty = modelIsDirty || baseUrlIsDirty;
+  const apiKeyIsDirty = chatApiKeyDraft.trim() !== chatApiKey.trim();
+  const chatSettingsAreDirty = modelIsDirty || baseUrlIsDirty || apiKeyIsDirty;
   const promptIsDirty = systemPromptDraft.trim() !== systemPrompt.trim();
   const chatModelIsConfigured = chatModelDraft.trim().length > 0;
   const chatConnectionIsVerified = Boolean(chatConnectionVerifiedAt) && !chatConnectionError;
@@ -360,6 +368,7 @@ export function SessionSelection({
       const result = await updateSessionChatModel(projectId, sessionId, {
         chatModel: chatModelDraft,
         chatBaseUrl: chatBaseUrlDraft,
+        chatApiKey: chatApiKeyDraft,
       });
 
       if (!result.ok) {
@@ -374,13 +383,13 @@ export function SessionSelection({
 
       pushToast({
         title:
-          chatModelDraft.trim() || chatBaseUrlDraft.trim()
+          chatModelDraft.trim() || chatBaseUrlDraft.trim() || chatApiKeyDraft.trim()
             ? "Configuración guardada"
             : "Configuración eliminada",
         description:
-          chatModelDraft.trim() || chatBaseUrlDraft.trim()
-            ? "La sesión guardó el modelo y la URL, y dejó pendiente una nueva verificación de conexión."
-            : "La sesión quedó sin modelo ni URL personalizados.",
+          chatModelDraft.trim() || chatBaseUrlDraft.trim() || chatApiKeyDraft.trim()
+            ? "La sesión guardó el modelo, la URL y la API key, y dejó pendiente una nueva verificación de conexión."
+            : "La sesión quedó sin modelo, URL ni API key personalizados.",
         variant: "success",
         durationMs: 5000,
       });
@@ -411,6 +420,7 @@ export function SessionSelection({
       const result = await verifySessionChatConnection(projectId, sessionId, {
         chatModel: chatModelDraft,
         chatBaseUrl: chatBaseUrlDraft,
+        chatApiKey: chatApiKeyDraft,
       });
 
       if (!result.ok) {
@@ -1192,16 +1202,21 @@ export function SessionSelection({
       <CenteredSheet
         open={activePanel === "settings"}
         title="Configuración y test del chat"
-        description="Ajusta el modelo, la URL, verifica la conexión y define el prompt de comportamiento sin sacar al transcript del foco principal."
+        description="Ajusta el modelo, la URL, la API key, verifica la conexión y define el prompt de comportamiento sin sacar al transcript del foco principal."
         onClose={() => setActivePanel(null)}
       >
         <div className="space-y-6">
-          <div className="grid gap-4 lg:grid-cols-3">
+          <div className="grid gap-4 lg:grid-cols-4">
             <InfoCard label="Proveedor" value={chatProviderLabel} />
             <InfoCard label="Modelo guardado" value={chatModel || "Sin definir"} />
             <InfoCard
               label="URL efectiva"
               value={chatResolvedBaseUrl || "https://api.openai.com/v1"}
+              compact
+            />
+            <InfoCard
+              label="API key"
+              value={chatApiKey ? "Configurada en sesión" : "No configurada"}
               compact
             />
           </div>
@@ -1228,6 +1243,21 @@ export function SessionSelection({
             />
             <p className="text-sm text-[var(--muted)]">
               Si la dejas vacía, la sesión usa la URL por defecto del entorno.
+            </p>
+          </label>
+
+          <label className="block space-y-2">
+            <FormLabel>Chat API key (optional)</FormLabel>
+            <input
+              type="password"
+              className="field mono"
+              value={chatApiKeyDraft}
+              onChange={(event) => setChatApiKeyDraft(event.target.value)}
+              placeholder="Bearer token opcional para este backend"
+              disabled={isSavingModel || isTestingConnection}
+            />
+            <p className="text-sm text-[var(--muted)]">
+              Si la dejas vacía, no se envía API key de sesión y se usa solo la del entorno si existe.
             </p>
           </label>
 

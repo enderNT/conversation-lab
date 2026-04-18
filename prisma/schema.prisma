@@ -89,6 +89,7 @@ model Session {
   systemPrompt String?
   chatModel String?
   chatBaseUrl String?
+  chatApiKey String?
   chatConnectionCheckedAt DateTime?
   chatConnectionVerifiedAt DateTime?
   chatConnectionError String?

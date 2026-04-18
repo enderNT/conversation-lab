@@ -53,6 +53,7 @@ const sessionPromptSchema = z.object({
 const sessionChatSettingsSchema = z.object({
   chatModel: z.string().trim().default(""),
   chatBaseUrl: z.string().default(""),
+  chatApiKey: z.string().default(""),
 });
 
 const caseSchema = z.object({
@@ -356,6 +357,7 @@ export async function sendSessionMessage(
       systemPrompt: true,
       chatModel: true,
       chatBaseUrl: true,
+      chatApiKey: true,
       chatConnectionVerifiedAt: true,
       messages: {
         orderBy: { orderIndex: "asc" },
@@ -392,6 +394,7 @@ export async function sendSessionMessage(
     const assistantReply = await generateAssistantReply({
       model: session.chatModel,
       baseUrl: session.chatBaseUrl,
+      apiKey: session.chatApiKey,
       systemPrompt: session.systemPrompt,
       messages: [
         ...session.messages.map((message) => ({
@@ -577,11 +580,12 @@ export async function deleteSession(projectId: string, sessionId: string) {
 export async function updateSessionChatModel(
   projectId: string,
   sessionId: string,
-  input: { chatModel: string; chatBaseUrl: string },
+  input: { chatModel: string; chatBaseUrl: string; chatApiKey: string },
 ) {
   const parsed = sessionChatSettingsSchema.parse({
     chatModel: input.chatModel,
     chatBaseUrl: input.chatBaseUrl,
+    chatApiKey: input.chatApiKey,
   });
 
   const session = await prisma.session.findUnique({
@@ -602,12 +606,14 @@ export async function updateSessionChatModel(
   try {
     const normalizedModel = parsed.chatModel.trim();
     const normalizedBaseUrl = normalizeChatBaseUrl(parsed.chatBaseUrl);
+    const normalizedApiKey = parsed.chatApiKey.trim();
 
     await prisma.session.update({
       where: { id: sessionId },
       data: {
         chatModel: normalizedModel || null,
         chatBaseUrl: normalizedBaseUrl,
+        chatApiKey: normalizedApiKey,
         chatConnectionCheckedAt: null,
         chatConnectionVerifiedAt: null,
         chatConnectionError: null,
@@ -635,11 +641,12 @@ export async function updateSessionChatModel(
 export async function verifySessionChatConnection(
   projectId: string,
   sessionId: string,
-  input: { chatModel: string; chatBaseUrl: string },
+  input: { chatModel: string; chatBaseUrl: string; chatApiKey: string },
 ) {
   const parsed = sessionChatSettingsSchema.parse({
     chatModel: input.chatModel,
     chatBaseUrl: input.chatBaseUrl,
+    chatApiKey: input.chatApiKey,
   });
 
   const session = await prisma.session.findUnique({
@@ -660,6 +667,7 @@ export async function verifySessionChatConnection(
   const normalizedModel = parsed.chatModel.trim();
   const checkedAt = new Date();
   let normalizedBaseUrl: string | null = null;
+  let normalizedApiKey: string | null = null;
 
   try {
     if (!normalizedModel) {
@@ -667,9 +675,11 @@ export async function verifySessionChatConnection(
     }
 
     normalizedBaseUrl = normalizeChatBaseUrl(parsed.chatBaseUrl);
+    normalizedApiKey = parsed.chatApiKey.trim();
     const result = await testOpenAIChatConnection({
       model: normalizedModel,
       baseUrl: normalizedBaseUrl,
+      apiKey: normalizedApiKey,
     });
 
     await prisma.session.update({
@@ -677,6 +687,7 @@ export async function verifySessionChatConnection(
       data: {
         chatModel: normalizedModel,
         chatBaseUrl: normalizedBaseUrl,
+        chatApiKey: normalizedApiKey,
         chatConnectionCheckedAt: checkedAt,
         chatConnectionVerifiedAt: checkedAt,
         chatConnectionError: null,
@@ -703,6 +714,7 @@ export async function verifySessionChatConnection(
       data: {
         chatModel: normalizedModel,
         chatBaseUrl: normalizedBaseUrl,
+        chatApiKey: normalizedApiKey,
         chatConnectionCheckedAt: checkedAt,
         chatConnectionVerifiedAt: null,
         chatConnectionError: message,

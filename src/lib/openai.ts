@@ -47,34 +47,59 @@ export function getConfiguredOpenAIBaseUrl() {
   return normalizeChatBaseUrl(process.env.OPENAI_BASE_URL);
 }
 
-export function getChatRuntimeConfiguration(baseUrlOverride?: string | null) {
-  const apiKey = process.env.OPENAI_API_KEY?.trim();
+export function normalizeChatApiKey(value: string | null | undefined) {
+  const trimmedValue = value?.trim();
+
+  return trimmedValue || null;
+}
+
+function resolveChatApiKey(
+  apiKeyOverride: string | null | undefined,
+  configuredApiKey: string | null,
+) {
+  if (apiKeyOverride === "") {
+    return null;
+  }
+
+  if (typeof apiKeyOverride === "string") {
+    return normalizeChatApiKey(apiKeyOverride);
+  }
+
+  return configuredApiKey;
+}
+
+export function getChatRuntimeConfiguration(
+  baseUrlOverride?: string | null,
+  apiKeyOverride?: string | null,
+) {
+  const configuredApiKey = normalizeChatApiKey(process.env.OPENAI_API_KEY);
+  const apiKey = resolveChatApiKey(apiKeyOverride, configuredApiKey);
   const compatibleMode = isOpenAICompatibleModeEnabled();
   const configuredBaseUrl = getConfiguredOpenAIBaseUrl();
   const overrideBaseUrl = normalizeChatBaseUrl(baseUrlOverride);
   const baseUrl = overrideBaseUrl || (compatibleMode ? configuredBaseUrl : null);
   const providerLabel = baseUrl || compatibleMode ? "OpenAI-compatible" : "OpenAI";
-  const disabledReason = baseUrl
-    ? null
-    : compatibleMode
-      ? "Define OPENAI_BASE_URL o guarda una URL en la sesión para usar un backend OpenAI-compatible."
-      : !apiKey
-        ? "Define OPENAI_API_KEY para habilitar el chat con OpenAI o guarda una URL personalizada en la sesión."
-        : null;
+  const disabledReason = compatibleMode && !baseUrl
+    ? "Define OPENAI_BASE_URL o guarda una URL en la sesión para usar un backend OpenAI-compatible."
+    : null;
 
   return {
     enabled: disabledReason === null,
     disabledReason,
     providerLabel,
     compatibleMode,
-    apiKey: apiKey || null,
+    apiKey,
     baseUrl,
     resolvedBaseUrl: baseUrl || DEFAULT_OPENAI_BASE_URL,
   };
 }
 
-function buildApiUrl(pathname: string, baseUrlOverride?: string | null) {
-  const configuration = getChatRuntimeConfiguration(baseUrlOverride);
+function buildApiUrl(
+  pathname: string,
+  baseUrlOverride?: string | null,
+  apiKeyOverride?: string | null,
+) {
+  const configuration = getChatRuntimeConfiguration(baseUrlOverride, apiKeyOverride);
 
   if (!configuration.enabled) {
     throw new Error(configuration.disabledReason ?? "OpenAI runtime is not configured.");
@@ -85,8 +110,11 @@ function buildApiUrl(pathname: string, baseUrlOverride?: string | null) {
   return `${configuration.resolvedBaseUrl}${normalizedPath}`;
 }
 
-function buildRequestHeaders() {
-  const configuration = getChatRuntimeConfiguration();
+function buildRequestHeaders(options?: {
+  baseUrl?: string | null;
+  apiKey?: string | null;
+}) {
+  const configuration = getChatRuntimeConfiguration(options?.baseUrl, options?.apiKey);
   const headers = new Headers({
     "Content-Type": "application/json",
   });
@@ -123,11 +151,11 @@ async function parseApiResponse(response: Response) {
 async function fetchOpenAIJson(
   pathname: string,
   init?: RequestInit,
-  options?: { baseUrl?: string | null },
+  options?: { baseUrl?: string | null; apiKey?: string | null },
 ) {
-  const response = await fetch(buildApiUrl(pathname, options?.baseUrl), {
+  const response = await fetch(buildApiUrl(pathname, options?.baseUrl, options?.apiKey), {
     ...init,
-    headers: buildRequestHeaders(),
+    headers: buildRequestHeaders(options),
     cache: "no-store",
   });
 
@@ -138,7 +166,11 @@ function normalizeModel(value: string) {
   return value.trim();
 }
 
-export async function testChatConnection(input: { model: string; baseUrl?: string | null }) {
+export async function testChatConnection(input: {
+  model: string;
+  baseUrl?: string | null;
+  apiKey?: string | null;
+}) {
   const model = normalizeModel(input.model);
 
   if (!model) {
@@ -149,6 +181,7 @@ export async function testChatConnection(input: { model: string; baseUrl?: strin
     method: "GET",
   }, {
     baseUrl: input.baseUrl,
+    apiKey: input.apiKey,
   });
 
   const listedModels =
@@ -189,6 +222,7 @@ export async function generateAssistantReply(input: {
   systemPrompt?: string | null;
   model: string;
   baseUrl?: string | null;
+  apiKey?: string | null;
 }) {
   const model = normalizeModel(input.model);
 
@@ -220,6 +254,7 @@ export async function generateAssistantReply(input: {
     }),
   }, {
     baseUrl: input.baseUrl,
+    apiKey: input.apiKey,
   })) as {
     id?: string;
     model?: string;
