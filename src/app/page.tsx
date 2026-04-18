@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { LlmConfigurationManager } from "@/components/llm-configuration-manager";
 import { ProjectCreateForm } from "@/components/project-create-form";
 import { prisma } from "@/lib/prisma";
 import { formatDate } from "@/lib/utils";
@@ -6,17 +7,22 @@ import { formatDate } from "@/lib/utils";
 export const dynamic = "force-dynamic";
 
 export default async function ProjectsPage() {
-  const projects = await prisma.project.findMany({
-    orderBy: { createdAt: "desc" },
-    include: {
-      _count: {
-        select: {
-          sessions: true,
-          cases: true,
+  const [projects, llmConfigurations] = await Promise.all([
+    prisma.project.findMany({
+      orderBy: { createdAt: "desc" },
+      include: {
+        _count: {
+          select: {
+            sessions: true,
+            cases: true,
+          },
         },
       },
-    },
-  });
+    }),
+    prisma.llmConfiguration.findMany({
+      orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
+    }),
+  ]);
 
   return (
     <div className="space-y-8">
@@ -74,6 +80,18 @@ export default async function ProjectsPage() {
           </article>
         ))}
       </section>
+
+      <LlmConfigurationManager
+        configurations={llmConfigurations.map((configuration) => ({
+          id: configuration.id,
+          name: configuration.name,
+          chatModel: configuration.chatModel,
+          chatBaseUrl: configuration.chatBaseUrl || "",
+          chatApiKey: configuration.chatApiKey || "",
+          createdAt: configuration.createdAt.toISOString(),
+          updatedAt: configuration.updatedAt.toISOString(),
+        }))}
+      />
     </div>
   );
 }

@@ -56,6 +56,13 @@ const sessionChatSettingsSchema = z.object({
   chatApiKey: z.string().default(""),
 });
 
+const llmConfigurationSchema = z.object({
+  name: z.string().trim().min(1, "Asigna un nombre para identificar la configuración."),
+  chatModel: z.string().trim().min(1, "Define un modelo para la configuración."),
+  chatBaseUrl: z.string().default(""),
+  chatApiKey: z.string().default(""),
+});
+
 const caseSchema = z.object({
   title: z.string().trim().optional().default(""),
   sourceSummary: z.string().trim().default(""),
@@ -239,6 +246,15 @@ function revalidateCasePaths(projectId: string, sessionId: string, caseId?: stri
   }
 }
 
+function normalizeLlmConfigurationInput(input: z.infer<typeof llmConfigurationSchema>) {
+  return {
+    name: input.name.trim(),
+    chatModel: input.chatModel.trim(),
+    chatBaseUrl: normalizeChatBaseUrl(input.chatBaseUrl),
+    chatApiKey: input.chatApiKey.trim() || null,
+  };
+}
+
 export async function createProject(formData: FormData) {
   const parsed = projectSchema.parse({
     name: asOptionalString(formData.get("name")),
@@ -338,6 +354,133 @@ export async function createSessionWithFeedback(
     redirectTo: `/projects/${projectId}/sessions/${sessionId}`,
     navigationMode: "push",
   });
+}
+
+export async function createLlmConfigurationWithFeedback(
+  _previousState: ActionFormState,
+  formData: FormData,
+) {
+  const parsed = llmConfigurationSchema.safeParse({
+    name: asOptionalString(formData.get("name")),
+    chatModel: asOptionalString(formData.get("chatModel")),
+    chatBaseUrl: asOptionalString(formData.get("chatBaseUrl")),
+    chatApiKey: asOptionalString(formData.get("chatApiKey")),
+  });
+
+  if (!parsed.success) {
+    return buildActionErrorState(
+      getActionErrorMessage(parsed.error, "No fue posible guardar la configuración LLM."),
+    );
+  }
+
+  try {
+    const normalized = normalizeLlmConfigurationInput(parsed.data);
+
+    await prisma.llmConfiguration.create({
+      data: normalized,
+    });
+  } catch (error) {
+    return buildActionErrorState(
+      getActionErrorMessage(error, "No fue posible guardar la configuración LLM."),
+    );
+  }
+
+  revalidatePath("/");
+
+  return buildActionRefreshSuccessState("Configuración LLM guardada correctamente.");
+}
+
+export async function updateLlmConfigurationWithFeedback(
+  configurationId: string,
+  _previousState: ActionFormState,
+  formData: FormData,
+) {
+  const parsed = llmConfigurationSchema.safeParse({
+    name: asOptionalString(formData.get("name")),
+    chatModel: asOptionalString(formData.get("chatModel")),
+    chatBaseUrl: asOptionalString(formData.get("chatBaseUrl")),
+    chatApiKey: asOptionalString(formData.get("chatApiKey")),
+  });
+
+  if (!parsed.success) {
+    return buildActionErrorState(
+      getActionErrorMessage(parsed.error, "No fue posible actualizar la configuración LLM."),
+    );
+  }
+
+  try {
+    const normalized = normalizeLlmConfigurationInput(parsed.data);
+
+    await prisma.llmConfiguration.update({
+      where: { id: configurationId },
+      data: normalized,
+    });
+  } catch (error) {
+    return buildActionErrorState(
+      getActionErrorMessage(error, "No fue posible actualizar la configuración LLM."),
+    );
+  }
+
+  revalidatePath("/");
+
+  return buildActionRefreshSuccessState("Configuración LLM actualizada correctamente.");
+}
+
+export async function deleteLlmConfigurationWithFeedback(
+  configurationId: string,
+  _previousState: ActionFormState,
+) {
+  void _previousState;
+
+  try {
+    await prisma.llmConfiguration.delete({
+      where: { id: configurationId },
+    });
+  } catch (error) {
+    return buildActionErrorState(
+      getActionErrorMessage(error, "No fue posible eliminar la configuración LLM."),
+    );
+  }
+
+  revalidatePath("/");
+
+  return buildActionRefreshSuccessState("Configuración LLM eliminada correctamente.");
+}
+
+export async function createLlmConfiguration(input: {
+  name: string;
+  chatModel: string;
+  chatBaseUrl: string;
+  chatApiKey: string;
+}) {
+  const parsed = llmConfigurationSchema.parse({
+    name: input.name,
+    chatModel: input.chatModel,
+    chatBaseUrl: input.chatBaseUrl,
+    chatApiKey: input.chatApiKey,
+  });
+
+  try {
+    const normalized = normalizeLlmConfigurationInput(parsed);
+
+    await prisma.llmConfiguration.create({
+      data: normalized,
+    });
+  } catch (error) {
+    return {
+      ok: false as const,
+      error:
+        error instanceof Error
+          ? error.message
+          : "No fue posible guardar la configuración LLM.",
+    };
+  }
+
+  revalidatePath("/");
+
+  return {
+    ok: true as const,
+  };
 }
 
 export async function sendSessionMessage(

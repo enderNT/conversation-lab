@@ -12,7 +12,7 @@ export default async function SessionChatPage({
 }) {
   const { projectId, sessionId } = await params;
 
-  const [session, projectSessions] = await Promise.all([
+  const [session, projectSessions, llmConfigurations] = await Promise.all([
     prisma.session.findUnique({
       where: { id: sessionId },
       include: {
@@ -42,6 +42,9 @@ export default async function SessionChatPage({
           },
         },
       },
+    }),
+    prisma.llmConfiguration.findMany({
+      orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
     }),
   ]);
 
@@ -79,6 +82,13 @@ export default async function SessionChatPage({
           chatApiKey={session.chatApiKey || ""}
           chatResolvedBaseUrl={chatRuntime.resolvedBaseUrl}
           chatModel={session.chatModel || ""}
+          savedLlmConfigurations={llmConfigurations.map((configuration) => ({
+            id: configuration.id,
+            name: configuration.name,
+            chatModel: configuration.chatModel,
+            chatBaseUrl: configuration.chatBaseUrl || "",
+            chatApiKey: configuration.chatApiKey || "",
+          }))}
           chatConnectionCheckedAt={session.chatConnectionCheckedAt?.toISOString() ?? null}
           chatConnectionVerifiedAt={session.chatConnectionVerifiedAt?.toISOString() ?? null}
           chatConnectionError={session.chatConnectionError}

@@ -5,6 +5,7 @@ import { startTransition, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   clearSessionChat,
+  createLlmConfiguration,
   deleteSession,
   sendSessionMessage,
   updateSessionChatModel,
@@ -40,6 +41,14 @@ type SessionHistoryPreview = {
   caseCount: number;
 };
 
+type SavedLlmConfiguration = {
+  id: string;
+  name: string;
+  chatModel: string;
+  chatBaseUrl: string;
+  chatApiKey: string;
+};
+
 type ConfirmState =
   | {
       action: "clear-chat" | "delete-session";
@@ -58,6 +67,7 @@ type SessionSelectionProps = {
   sessionHistory: SessionHistoryPreview[];
   messages: SelectableMessage[];
   recentCases: SessionCasePreview[];
+  savedLlmConfigurations: SavedLlmConfiguration[];
   chatModel: string;
   chatRuntimeEnabled: boolean;
   chatRuntimeDisabledReason: string | null;
@@ -80,6 +90,7 @@ export function SessionSelection({
   sessionHistory = [],
   messages = [],
   recentCases = [],
+  savedLlmConfigurations = [],
   chatModel = "",
   chatRuntimeEnabled,
   chatRuntimeDisabledReason = null,
@@ -99,12 +110,15 @@ export function SessionSelection({
   const [focusIndex, setFocusIndex] = useState<number | null>(null);
   const [draft, setDraft] = useState("");
   const [pendingUserMessage, setPendingUserMessage] = useState<string | null>(null);
+  const [selectedLlmConfigurationId, setSelectedLlmConfigurationId] = useState("");
+  const [newLlmConfigurationName, setNewLlmConfigurationName] = useState("");
   const [chatModelDraft, setChatModelDraft] = useState(chatModel);
   const [chatBaseUrlDraft, setChatBaseUrlDraft] = useState(chatBaseUrl);
   const [chatApiKeyDraft, setChatApiKeyDraft] = useState(chatApiKey);
   const [systemPromptDraft, setSystemPromptDraft] = useState(systemPrompt);
   const [isSending, setIsSending] = useState(false);
   const [isSavingModel, setIsSavingModel] = useState(false);
+  const [isSavingLlmConfiguration, setIsSavingLlmConfiguration] = useState(false);
   const [isTestingConnection, setIsTestingConnection] = useState(false);
   const [isSavingPrompt, setIsSavingPrompt] = useState(false);
   const [isClearingChat, setIsClearingChat] = useState(false);
@@ -318,6 +332,87 @@ export function SessionSelection({
     setHistoryOpen(true);
     setHeaderMenuOpen(false);
     setToolsOpen(false);
+  }
+
+  function handleLoadSavedConfiguration() {
+    if (!selectedLlmConfigurationId) {
+      return;
+    }
+
+    const selectedConfiguration = savedLlmConfigurations.find(
+      (configuration) => configuration.id === selectedLlmConfigurationId,
+    );
+
+    if (!selectedConfiguration) {
+      pushToast({
+        title: "Configuración no disponible",
+        description: "La configuración seleccionada ya no está disponible.",
+        variant: "error",
+        durationMs: 7000,
+      });
+      return;
+    }
+
+    setChatModelDraft(selectedConfiguration.chatModel);
+    setChatBaseUrlDraft(selectedConfiguration.chatBaseUrl);
+    setChatApiKeyDraft(selectedConfiguration.chatApiKey);
+
+    pushToast({
+      title: "Configuración cargada",
+      description: `Se cargó "${selectedConfiguration.name}" en el borrador de la sesión.`,
+      variant: "success",
+      durationMs: 5000,
+    });
+  }
+
+  async function handleSaveCurrentConfiguration() {
+    const trimmedName = newLlmConfigurationName.trim();
+
+    if (!trimmedName || isSavingLlmConfiguration) {
+      return;
+    }
+
+    setIsSavingLlmConfiguration(true);
+
+    try {
+      const result = await createLlmConfiguration({
+        name: trimmedName,
+        chatModel: chatModelDraft,
+        chatBaseUrl: chatBaseUrlDraft,
+        chatApiKey: chatApiKeyDraft,
+      });
+
+      if (!result.ok) {
+        pushToast({
+          title: "No fue posible guardar la configuración",
+          description: result.error,
+          variant: "error",
+          durationMs: 7000,
+        });
+        return;
+      }
+
+      setNewLlmConfigurationName("");
+      pushToast({
+        title: "Configuración LLM guardada",
+        description: `La configuración "${trimmedName}" ya está disponible para cualquier proyecto.`,
+        variant: "success",
+        durationMs: 5000,
+      });
+
+      startTransition(() => {
+        router.refresh();
+      });
+    } catch {
+      pushToast({
+        title: "No fue posible guardar la configuración",
+        description: "No fue posible guardar esta configuración LLM.",
+        variant: "error",
+        durationMs: 7000,
+      });
+    } finally {
+      setIsSavingLlmConfiguration(false);
+    }
   }
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -1259,6 +1354,74 @@ export function SessionSelection({
               value={chatApiKey ? "Configurada en sesión" : "No configurada"}
               compact
             />
+          </div>
+
+          <div className="grid gap-4 rounded-[1.5rem] border border-[var(--line)] bg-white/50 p-4 lg:grid-cols-[minmax(0,1fr)_auto]">
+            <div className="space-y-3">
+              <label className="block space-y-2">
+                <FormLabel>Usar configuración guardada</FormLabel>
+                <select
+                  className="field"
+                  value={selectedLlmConfigurationId}
+                  onChange={(event) => setSelectedLlmConfigurationId(event.target.value)}
+                  disabled={isSavingModel || isTestingConnection || savedLlmConfigurations.length === 0}
+                >
+                  <option value="">Selecciona una configuración global</option>
+                  {savedLlmConfigurations.map((configuration) => (
+                    <option key={configuration.id} value={configuration.id}>
+                      {configuration.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <p className="text-sm text-[var(--muted)]">
+                La selección carga modelo, URL y API key al borrador actual. Después puedes guardar y probar la sesión como siempre.
+              </p>
+            </div>
+            <div className="flex items-end">
+              <button
+                type="button"
+                className="button-secondary"
+                onClick={handleLoadSavedConfiguration}
+                disabled={!selectedLlmConfigurationId || isSavingModel || isTestingConnection}
+              >
+                Cargar al borrador
+              </button>
+            </div>
+          </div>
+
+          <div className="grid gap-4 rounded-[1.5rem] border border-[var(--line)] bg-white/50 p-4 lg:grid-cols-[minmax(0,1fr)_auto]">
+            <div className="space-y-3">
+              <label className="block space-y-2">
+                <FormLabel>Guardar como nueva configuración</FormLabel>
+                <input
+                  className="field"
+                  value={newLlmConfigurationName}
+                  onChange={(event) => setNewLlmConfigurationName(event.target.value)}
+                  placeholder="Ejemplo: OpenAI equipo clínico"
+                  disabled={isSavingLlmConfiguration}
+                />
+              </label>
+              <p className="text-sm text-[var(--muted)]">
+                Esto guarda el modelo, la URL y la API key del borrador actual para reutilizarlos en cualquier proyecto.
+              </p>
+            </div>
+            <div className="flex items-end">
+              <button
+                type="button"
+                className="button-secondary"
+                onClick={() => {
+                  void handleSaveCurrentConfiguration();
+                }}
+                disabled={
+                  isSavingLlmConfiguration ||
+                  newLlmConfigurationName.trim().length === 0 ||
+                  chatModelDraft.trim().length === 0
+                }
+              >
+                {isSavingLlmConfiguration ? "Guardando..." : "Guardar como nueva"}
+              </button>
+            </div>
           </div>
 
           <label className="block space-y-2">

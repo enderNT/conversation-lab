@@ -82,6 +82,18 @@ model Project {
   cases       Case[]
 }
 
+model LlmConfiguration {
+  id          String   @id @default(cuid())
+  name        String
+  chatModel   String
+  chatBaseUrl String?
+  chatApiKey  String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([createdAt])
+}
+
 model Session {
   id        String    @id @default(cuid())
   projectId String
