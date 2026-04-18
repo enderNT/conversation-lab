@@ -46,6 +46,11 @@ const chatTurnSchema = z.object({
   text: z.string().trim().min(1, "El mensaje no puede estar vacío"),
 });
 
+const sessionMessageEditSchema = z.object({
+  messageId: z.string().trim().min(1, "El mensaje no es válido."),
+  text: z.string().trim().min(1, "El mensaje no puede estar vacío"),
+});
+
 const sessionPromptSchema = z.object({
   systemPrompt: z.string().default(""),
 });
@@ -871,6 +876,88 @@ export async function sendSessionMessage(
 
   return {
     ok: true as const,
+  };
+}
+
+export async function updateSessionMessage(
+  projectId: string,
+  sessionId: string,
+  input: { messageId: string; text: string },
+) {
+  const parsed = sessionMessageEditSchema.parse(input);
+
+  const sessionMessage = await prisma.message.findUnique({
+    where: { id: parsed.messageId },
+    select: {
+      id: true,
+      sessionId: true,
+      text: true,
+      metadataJson: true,
+      session: {
+        select: {
+          projectId: true,
+        },
+      },
+    },
+  });
+
+  if (
+    !sessionMessage ||
+    sessionMessage.sessionId !== sessionId ||
+    sessionMessage.session.projectId !== projectId
+  ) {
+    return {
+      ok: false as const,
+      error: "El mensaje no existe o no pertenece a esta sesión.",
+    };
+  }
+
+  const currentMetadata =
+    sessionMessage.metadataJson &&
+    typeof sessionMessage.metadataJson === "object" &&
+    !Array.isArray(sessionMessage.metadataJson)
+      ? { ...(sessionMessage.metadataJson as Prisma.JsonObject) }
+      : {};
+
+  if (parsed.text === sessionMessage.text) {
+    return {
+      ok: true as const,
+      message: {
+        id: sessionMessage.id,
+        text: sessionMessage.text,
+        editedAt:
+          typeof currentMetadata.editedAt === "string" ? currentMetadata.editedAt : null,
+      },
+    };
+  }
+
+  const editedAt = new Date().toISOString();
+  const nextMetadata: Prisma.InputJsonValue = {
+    ...currentMetadata,
+    editedAt,
+    originalText:
+      typeof currentMetadata.originalText === "string"
+        ? currentMetadata.originalText
+        : sessionMessage.text,
+  };
+
+  await prisma.message.update({
+    where: { id: parsed.messageId },
+    data: {
+      text: parsed.text,
+      metadataJson: nextMetadata,
+    },
+  });
+
+  revalidatePath(`/projects/${projectId}/sessions/${sessionId}`);
+
+  return {
+    ok: true as const,
+    message: {
+      id: parsed.messageId,
+      text: parsed.text,
+      editedAt,
+    },
   };
 }
 

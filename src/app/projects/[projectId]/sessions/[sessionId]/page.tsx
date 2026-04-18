@@ -140,6 +140,11 @@ export default async function SessionChatPage({
             text: message.text,
             orderIndex: message.orderIndex,
             createdAt: message.createdAt.toISOString(),
+            isEdited:
+              !!message.metadataJson &&
+              typeof message.metadataJson === "object" &&
+              !Array.isArray(message.metadataJson) &&
+              typeof message.metadataJson.editedAt === "string",
           }))}
         />
       </section>

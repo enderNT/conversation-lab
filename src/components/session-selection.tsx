@@ -8,6 +8,7 @@ import {
   createLlmConfiguration,
   deleteSession,
   sendSessionMessage,
+  updateSessionMessage,
   updateSessionChatModel,
   updateSessionNotes,
   updateSessionSystemPrompt,
@@ -25,6 +26,7 @@ type SelectableMessage = {
   text: string;
   orderIndex: number;
   createdAt: string;
+  isEdited: boolean;
 };
 
 type SessionCasePreview = {
@@ -62,6 +64,10 @@ type ConfirmState =
       tone: "warning" | "danger";
     }
   | null;
+
+type EditConflictState = {
+  nextMessageId: string;
+} | null;
 
 type SessionSelectionProps = {
   projectId: string;
@@ -116,10 +122,15 @@ export function SessionSelection({
 }: SessionSelectionProps) {
   const router = useRouter();
   const { pushToast } = useToast();
+  const [localMessages, setLocalMessages] = useState(messages);
   const [anchorIndex, setAnchorIndex] = useState<number | null>(null);
   const [focusIndex, setFocusIndex] = useState<number | null>(null);
   const [draft, setDraft] = useState("");
   const [pendingUserMessage, setPendingUserMessage] = useState<string | null>(null);
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState("");
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
+  const [editConflictState, setEditConflictState] = useState<EditConflictState>(null);
   const [selectedLlmConfigurationId, setSelectedLlmConfigurationId] = useState("");
   const [newLlmConfigurationName, setNewLlmConfigurationName] = useState("");
   const [chatModelDraft, setChatModelDraft] = useState(chatModel);
@@ -144,6 +155,7 @@ export function SessionSelection({
   const [confirmState, setConfirmState] = useState<ConfirmState>(null);
   const formRef = useRef<HTMLFormElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const editTextareaRef = useRef<HTMLTextAreaElement>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
   const toolsRef = useRef<HTMLDivElement>(null);
 
@@ -156,7 +168,7 @@ export function SessionSelection({
         };
 
   const selectedMessages = selectionRange
-    ? messages.filter(
+    ? localMessages.filter(
         (message) =>
           message.orderIndex >= selectionRange.start &&
           message.orderIndex <= selectionRange.end,
@@ -164,23 +176,41 @@ export function SessionSelection({
     : [];
 
   const selectionPreview = selectedMessages.slice(0, 6);
-  const hasBlockingOverlay = historyOpen || activePanel !== null || confirmState !== null;
+  const hasBlockingOverlay =
+    historyOpen || activePanel !== null || confirmState !== null || editConflictState !== null;
   const caseHref = selectionRange
     ? `/projects/${projectId}/sessions/${sessionId}/cases/new?start=${selectionRange.start}&end=${selectionRange.end}`
     : "#";
   const caseLibraryHref = `/cases?projectId=${projectId}`;
   const displayedMessages = pendingUserMessage
     ? [
-        ...messages,
+        ...localMessages,
         {
           id: "__pending-user-message__",
           role: "user" as const,
           text: pendingUserMessage,
-          orderIndex: messages.length > 0 ? messages[messages.length - 1]!.orderIndex + 1 : 0,
+          orderIndex:
+            localMessages.length > 0 ? localMessages[localMessages.length - 1]!.orderIndex + 1 : 0,
           createdAt: new Date().toISOString(),
+          isEdited: false,
         },
       ]
-    : messages;
+    : localMessages;
+  const editingMessage =
+    editingMessageId === null
+      ? null
+      : localMessages.find((message) => message.id === editingMessageId) ?? null;
+  const normalizedEditDraft = editDraft.trim();
+  const editIsDirty = editingMessage !== null && normalizedEditDraft !== editingMessage.text;
+  const editCanSave =
+    editingMessage !== null &&
+    normalizedEditDraft.length > 0 &&
+    normalizedEditDraft !== editingMessage.text &&
+    !isSavingEdit;
+
+  useEffect(() => {
+    setLocalMessages(messages);
+  }, [messages]);
 
   useEffect(() => {
     const container = messagesRef.current;
@@ -190,7 +220,7 @@ export function SessionSelection({
     }
 
     container.scrollTop = container.scrollHeight;
-  }, [messages.length]);
+  }, [displayedMessages.length]);
 
   useEffect(() => {
     setChatModelDraft(chatModel);
@@ -213,6 +243,35 @@ export function SessionSelection({
   }, [systemPrompt]);
 
   useEffect(() => {
+    if (!editingMessageId) {
+      return;
+    }
+
+    const textareaElement = editTextareaRef.current;
+
+    if (!textareaElement) {
+      return;
+    }
+
+    textareaElement.focus();
+    textareaElement.setSelectionRange(textareaElement.value.length, textareaElement.value.length);
+  }, [editingMessageId]);
+
+  useEffect(() => {
+    if (!editingMessageId) {
+      return;
+    }
+
+    if (localMessages.some((message) => message.id === editingMessageId)) {
+      return;
+    }
+
+    setEditingMessageId(null);
+    setEditDraft("");
+    setEditConflictState(null);
+  }, [editingMessageId, localMessages]);
+
+  useEffect(() => {
     if (!hasBlockingOverlay) {
       return;
     }
@@ -233,6 +292,17 @@ export function SessionSelection({
 
       if (confirmState) {
         setConfirmState(null);
+        return;
+      }
+
+      if (editConflictState) {
+        setEditConflictState(null);
+        return;
+      }
+
+      if (editingMessageId) {
+        setEditingMessageId(null);
+        setEditDraft("");
         return;
       }
 
@@ -262,7 +332,7 @@ export function SessionSelection({
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [activePanel, confirmState, headerMenuOpen, historyOpen, toolsOpen]);
+  }, [activePanel, confirmState, editConflictState, editingMessageId, headerMenuOpen, historyOpen, toolsOpen]);
 
   useEffect(() => {
     if (!headerMenuOpen && !toolsOpen) {
@@ -302,6 +372,7 @@ export function SessionSelection({
     chatModelIsConfigured &&
     chatConnectionIsVerified &&
     !chatSettingsAreDirty;
+  const chatComposerBlocked = editingMessageId !== null || isSavingEdit;
 
   const chatAvailabilityMessage = !chatRuntimeEnabled
     ? chatRuntimeDisabledReason || "La configuración del proveedor no es válida."
@@ -320,6 +391,41 @@ export function SessionSelection({
     setFocusIndex(null);
   }
 
+  function startEditingMessage(messageId: string) {
+    const message = localMessages.find((candidate) => candidate.id === messageId);
+
+    if (!message) {
+      return;
+    }
+
+    setEditingMessageId(message.id);
+    setEditDraft(message.text);
+    setEditConflictState(null);
+  }
+
+  function handleCancelEdit() {
+    setEditingMessageId(null);
+    setEditDraft("");
+    setEditConflictState(null);
+  }
+
+  function handleRequestEdit(messageId: string) {
+    if (isSending || isSavingEdit) {
+      return;
+    }
+
+    if (editingMessageId === messageId) {
+      return;
+    }
+
+    if (editIsDirty) {
+      setEditConflictState({ nextMessageId: messageId });
+      return;
+    }
+
+    startEditingMessage(messageId);
+  }
+
   function handleSelect(orderIndex: number) {
     if (anchorIndex === null) {
       setAnchorIndex(orderIndex);
@@ -328,6 +434,68 @@ export function SessionSelection({
     }
 
     setFocusIndex(orderIndex);
+  }
+
+  async function handleSaveEditedMessage(nextMessageId?: string) {
+    if (!editingMessage || !editCanSave) {
+      return;
+    }
+
+    setIsSavingEdit(true);
+
+    try {
+      const result = await updateSessionMessage(projectId, sessionId, {
+        messageId: editingMessage.id,
+        text: normalizedEditDraft,
+      });
+
+      if (!result.ok) {
+        pushToast({
+          title: "No fue posible actualizar el turno",
+          description: result.error,
+          variant: "error",
+          durationMs: 7000,
+        });
+        return;
+      }
+
+      setLocalMessages((currentMessages) =>
+        currentMessages.map((message) =>
+          message.id === editingMessage.id
+            ? {
+                ...message,
+                text: result.message.text,
+                isEdited: true,
+              }
+            : message,
+        ),
+      );
+
+      pushToast({
+        title: "Turno actualizado",
+        description: "El transcript ya usa el texto editado.",
+        variant: "success",
+        durationMs: 3000,
+      });
+
+      if (nextMessageId) {
+        startEditingMessage(nextMessageId);
+        return;
+      }
+
+      setEditingMessageId(null);
+      setEditDraft("");
+      setEditConflictState(null);
+    } catch {
+      pushToast({
+        title: "No fue posible actualizar el turno",
+        description: "No fue posible guardar el texto editado del transcript.",
+        variant: "error",
+        durationMs: 7000,
+      });
+    } finally {
+      setIsSavingEdit(false);
+    }
   }
 
   function openCasesPanel() {
@@ -800,6 +968,11 @@ export function SessionSelection({
           : chatSettingsAreDirty
             ? "Cambios sin guardar"
             : "Chat pausado";
+  const composerStatusLabel = chatComposerBlocked
+    ? "Edición en curso"
+    : chatEnabled
+      ? "Listo para enviar"
+      : connectionSummary;
 
   return (
     <>
@@ -1024,6 +1197,9 @@ export function SessionSelection({
                 selectionRange !== null &&
                 message.orderIndex >= selectionRange.start &&
                 message.orderIndex <= selectionRange.end;
+              const isEditing = editingMessageId === message.id;
+              const editButtonDisabled =
+                isSending || isSavingEdit || message.id === "__pending-user-message__";
 
               return (
                 <div
@@ -1033,47 +1209,168 @@ export function SessionSelection({
                     message.role === "user" ? "justify-end" : "justify-start",
                   )}
                 >
-                  <button
-                    type="button"
-                    onClick={() => handleSelect(message.orderIndex)}
-                    aria-pressed={isSelected}
-                    className={cn(
-                      "group relative w-full max-w-3xl rounded-[1.75rem] border px-4 py-4 text-left shadow-[0_12px_32px_rgba(15,23,42,0.06)] transition duration-150 hover:-translate-y-0.5 sm:px-5",
-                      message.role === "user"
-                        ? "bg-[var(--user-bubble)]"
-                        : "bg-[var(--assistant-bubble)]",
-                      isSelected
-                        ? "border-amber-300 ring-2 ring-amber-200"
-                        : "border-[var(--line)] hover:border-[var(--accent)]",
+                  <div className="group relative w-full max-w-3xl">
+                    {!isEditing ? (
+                      <button
+                        type="button"
+                        onClick={() => handleSelect(message.orderIndex)}
+                        aria-pressed={isSelected}
+                        className={cn(
+                          "w-full rounded-[1.75rem] border px-4 py-4 text-left shadow-[0_12px_32px_rgba(15,23,42,0.06)] transition duration-150 hover:-translate-y-0.5 sm:px-5",
+                          message.role === "user"
+                            ? "bg-[var(--user-bubble)]"
+                            : "bg-[var(--assistant-bubble)]",
+                          isSelected
+                            ? "border-amber-300 ring-2 ring-amber-200"
+                            : "border-[var(--line)] hover:border-[var(--accent)]",
+                        )}
+                      >
+                        <div className="mb-3 flex flex-wrap items-center justify-between gap-3 pr-20 text-xs uppercase tracking-[0.18em] text-[var(--muted)]">
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={cn(
+                                "rounded-full px-2.5 py-1 text-[10px] font-semibold",
+                                message.role === "user"
+                                  ? "bg-white/75 text-[var(--foreground)]"
+                                  : "bg-[rgba(15,95,92,0.12)] text-[var(--accent-strong)]",
+                              )}
+                            >
+                              {message.role === "user" ? "Usuario" : "Asistente"}
+                            </span>
+                            <span>Turno {message.orderIndex + 1}</span>
+                            {message.isEdited ? (
+                              <span className="rounded-full border border-[var(--line)] bg-white/70 px-2 py-0.5 text-[10px] font-semibold tracking-[0.12em] text-[var(--muted-strong)]">
+                                Editado
+                              </span>
+                            ) : null}
+                          </div>
+                          <span className="mono normal-case tracking-normal">{formatDate(message.createdAt)}</span>
+                        </div>
+
+                        <p className="whitespace-pre-wrap text-sm leading-7 text-[var(--muted-strong)] sm:text-[15px]">
+                          {message.text}
+                        </p>
+
+                        {isSelected ? (
+                          <div className="mt-4 text-xs font-semibold uppercase tracking-[0.18em] text-amber-900">
+                            Incluido en la selección actual
+                          </div>
+                        ) : null}
+                      </button>
+                    ) : (
+                      <div
+                        className={cn(
+                          "w-full rounded-[1.75rem] border px-4 py-4 text-left shadow-[0_12px_32px_rgba(15,23,42,0.06)] sm:px-5",
+                          message.role === "user"
+                            ? "bg-[var(--user-bubble)]"
+                            : "bg-[var(--assistant-bubble)]",
+                          "border-[var(--accent)] ring-2 ring-[color:color-mix(in_srgb,var(--accent)_22%,white)]",
+                        )}
+                      >
+                        <div className="mb-3 flex flex-wrap items-center justify-between gap-3 text-xs uppercase tracking-[0.18em] text-[var(--muted)]">
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={cn(
+                                "rounded-full px-2.5 py-1 text-[10px] font-semibold",
+                                message.role === "user"
+                                  ? "bg-white/75 text-[var(--foreground)]"
+                                  : "bg-[rgba(15,95,92,0.12)] text-[var(--accent-strong)]",
+                              )}
+                            >
+                              {message.role === "user" ? "Usuario" : "Asistente"}
+                            </span>
+                            <span>Turno {message.orderIndex + 1}</span>
+                            {message.isEdited ? (
+                              <span className="rounded-full border border-[var(--line)] bg-white/70 px-2 py-0.5 text-[10px] font-semibold tracking-[0.12em] text-[var(--muted-strong)]">
+                                Editado
+                              </span>
+                            ) : null}
+                          </div>
+                          <span className="mono normal-case tracking-normal">{formatDate(message.createdAt)}</span>
+                        </div>
+
+                        <textarea
+                          ref={editTextareaRef}
+                          className="field min-h-32 w-full resize-y bg-white/80"
+                          value={editDraft}
+                          onChange={(event) => setEditDraft(event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Escape") {
+                              event.preventDefault();
+                              handleCancelEdit();
+                              return;
+                            }
+
+                            if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                              event.preventDefault();
+                              void handleSaveEditedMessage();
+                            }
+                          }}
+                          aria-label={`Editar turno ${message.orderIndex + 1}`}
+                          disabled={isSavingEdit}
+                        />
+
+                        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                          <p className="text-xs text-[var(--muted)]">
+                            <kbd className="rounded border border-[var(--line)] bg-white/70 px-1.5 py-0.5">
+                              Esc
+                            </kbd>{" "}
+                            cancela,{" "}
+                            <kbd className="rounded border border-[var(--line)] bg-white/70 px-1.5 py-0.5">
+                              Cmd/Ctrl + Enter
+                            </kbd>{" "}
+                            guarda.
+                          </p>
+                          <div className="flex flex-wrap gap-3">
+                            <button
+                              type="button"
+                              className="button-secondary"
+                              onClick={handleCancelEdit}
+                              disabled={isSavingEdit}
+                            >
+                              Cancelar
+                            </button>
+                            <button
+                              type="button"
+                              className="button-primary"
+                              onClick={() => {
+                                void handleSaveEditedMessage();
+                              }}
+                              disabled={!editCanSave}
+                            >
+                              {isSavingEdit ? "Guardando..." : "Guardar"}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
                     )}
-                  >
-                    <div className="mb-3 flex flex-wrap items-center justify-between gap-3 text-xs uppercase tracking-[0.18em] text-[var(--muted)]">
-                      <div className="flex items-center gap-2">
-                        <span
-                          className={cn(
-                            "rounded-full px-2.5 py-1 text-[10px] font-semibold",
-                            message.role === "user"
-                              ? "bg-white/75 text-[var(--foreground)]"
-                              : "bg-[rgba(15,95,92,0.12)] text-[var(--accent-strong)]",
-                          )}
-                        >
-                          {message.role === "user" ? "Usuario" : "Asistente"}
-                        </span>
-                        <span>Turno {message.orderIndex + 1}</span>
-                      </div>
-                      <span className="mono normal-case tracking-normal">{formatDate(message.createdAt)}</span>
-                    </div>
 
-                    <p className="whitespace-pre-wrap text-sm leading-7 text-[var(--muted-strong)] sm:text-[15px]">
-                      {message.text}
-                    </p>
-
-                    {isSelected ? (
-                      <div className="mt-4 text-xs font-semibold uppercase tracking-[0.18em] text-amber-900">
-                        Incluido en la selección actual
-                      </div>
+                    {message.id !== "__pending-user-message__" && !isEditing ? (
+                      <button
+                        type="button"
+                        className="absolute right-3 top-3 inline-flex items-center gap-2 rounded-full border border-[var(--line)] bg-white/92 px-3 py-1.5 text-xs font-semibold text-[var(--foreground)] opacity-0 shadow-sm transition group-hover:opacity-100 focus-visible:opacity-100 disabled:cursor-not-allowed disabled:opacity-50"
+                        onClick={() => handleRequestEdit(message.id)}
+                        disabled={editButtonDisabled}
+                        aria-label={`Editar turno ${message.orderIndex + 1}`}
+                        title={
+                          isSending
+                            ? "No puedes editar mientras el asistente responde"
+                            : `Editar turno ${message.orderIndex + 1}`
+                        }
+                      >
+                        <svg aria-hidden="true" viewBox="0 0 20 20" fill="none" className="h-3.5 w-3.5">
+                          <path
+                            d="M13.75 3.75a1.768 1.768 0 0 1 2.5 2.5l-8.5 8.5-3 0.5 0.5-3 8.5-8.5Z"
+                            stroke="currentColor"
+                            strokeWidth="1.6"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                        <span>Editar</span>
+                      </button>
                     ) : null}
-                  </button>
+                  </div>
                 </div>
               );
             })}
@@ -1143,12 +1440,14 @@ export function SessionSelection({
                     aria-hidden="true"
                   />
                   <span className="font-medium text-[var(--muted-strong)]">
-                    {chatEnabled ? "Listo para enviar" : connectionSummary}
+                    {composerStatusLabel}
                   </span>
                   <span className="rounded-full border border-[var(--line)] bg-white/70 px-2 py-1 font-medium text-[var(--foreground)]">
                     Conexión: {chatConnectionVerifiedAt ? "Verificada" : "Pendiente"}
                   </span>
-                  {chatEnabled ? (
+                  {chatComposerBlocked ? (
+                    <span className="text-[var(--muted)]">Termina la edición para enviar</span>
+                  ) : chatEnabled ? (
                     <span className="text-[var(--muted)]">Enter envía</span>
                   ) : (
                     <button
@@ -1166,6 +1465,7 @@ export function SessionSelection({
                   className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[var(--accent)] text-white transition hover:bg-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-60"
                   disabled={
                     !chatEnabled ||
+                    chatComposerBlocked ||
                     isSending ||
                     isClearingChat ||
                     isDeletingSession ||
@@ -1208,7 +1508,13 @@ export function SessionSelection({
                 }}
                 placeholder="Escribe aquí para conversar con el modelo. Enter envía, Shift+Enter agrega otra línea."
                 required
-                disabled={!chatEnabled || isSending || isClearingChat || isDeletingSession}
+                disabled={
+                  !chatEnabled ||
+                  chatComposerBlocked ||
+                  isSending ||
+                  isClearingChat ||
+                  isDeletingSession
+                }
               />
             </form>
           </div>
@@ -1741,6 +2047,31 @@ export function SessionSelection({
           }
         }}
       />
+
+      <EditConflictModal
+        open={editConflictState !== null}
+        isBusy={isSavingEdit}
+        canSave={editingMessage !== null && normalizedEditDraft.length > 0}
+        onCancel={() => setEditConflictState(null)}
+        onDiscard={() => {
+          const nextMessageId = editConflictState?.nextMessageId;
+
+          if (!nextMessageId) {
+            return;
+          }
+
+          startEditingMessage(nextMessageId);
+        }}
+        onSave={() => {
+          const nextMessageId = editConflictState?.nextMessageId;
+
+          if (!nextMessageId) {
+            return;
+          }
+
+          void handleSaveEditedMessage(nextMessageId);
+        }}
+      />
     </>
   );
 }
@@ -1961,6 +2292,60 @@ function ConfirmationModal({
             disabled={isBusy}
           >
             {isBusy ? "Procesando..." : state.confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EditConflictModal({
+  open,
+  isBusy,
+  canSave,
+  onCancel,
+  onDiscard,
+  onSave,
+}: {
+  open: boolean;
+  isBusy: boolean;
+  canSave: boolean;
+  onCancel: () => void;
+  onDiscard: () => void;
+  onSave: () => void;
+}) {
+  if (!open) {
+    return null;
+  }
+
+  return (
+    <div className="theme-overlay fixed inset-0 z-[60] flex items-center justify-center p-4 backdrop-blur-[1px] sm:p-6">
+      <button
+        type="button"
+        aria-label="Cerrar confirmación de edición"
+        className="absolute inset-0"
+        onClick={onCancel}
+      />
+      <div className="theme-drawer relative w-full max-w-lg rounded-[2rem] border border-[var(--line)] p-6 shadow-[0_20px_56px_rgba(15,23,42,0.24)] sm:p-7">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--muted)]">
+          Edición en curso
+        </p>
+        <h2 className="mt-3 text-2xl font-semibold tracking-tight text-[var(--foreground)]">
+          Guardar cambios o descartarlos
+        </h2>
+        <p className="mt-3 text-sm leading-7 text-[var(--muted)]">
+          Hay cambios sin guardar en este turno. Puedes guardarlos antes de editar otro mensaje o descartarlos y continuar.
+        </p>
+
+        <div className="mt-6 flex flex-wrap justify-end gap-3">
+          <button type="button" className="button-secondary" onClick={onCancel} disabled={isBusy}>
+            Cancelar
+          </button>
+          <button type="button" className="button-secondary" onClick={onDiscard} disabled={isBusy}>
+            Descartar cambios
+          </button>
+          <button type="button" className="button-primary" onClick={onSave} disabled={isBusy || !canSave}>
+            {isBusy ? "Guardando..." : "Guardar cambios"}
           </button>
         </div>
       </div>
