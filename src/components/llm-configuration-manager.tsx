@@ -40,8 +40,8 @@ export function LlmConfigurationManager({
 
   return (
     <section className="space-y-6">
-      <div className="grid gap-6 lg:grid-cols-[380px_minmax(0,1fr)]">
-        <form action={createAction} className="surface rounded-[1.75rem] p-5 sm:p-6">
+      <div>
+        <form action={createAction} className="surface max-w-xl rounded-[1.75rem] p-5 sm:p-6">
           <h3 className="text-lg font-semibold">Nueva configuración</h3>
           <div className="mt-4 space-y-4">
             <label className="block space-y-2">
@@ -73,18 +73,6 @@ export function LlmConfigurationManager({
             </FormSubmitButton>
           </div>
         </form>
-
-        <div className="surface rounded-[1.75rem] p-5 sm:p-6">
-          <p className="text-sm uppercase tracking-[0.22em] text-[var(--muted)]">
-            Configuraciones LLM
-          </p>
-          <h2 className="mt-3 text-3xl font-semibold tracking-tight text-[var(--foreground)]">
-            Biblioteca global reutilizable.
-          </h2>
-          <p className="mt-4 max-w-3xl text-sm leading-7 text-[var(--muted)]">
-            Crea, actualiza o elimina configuraciones para reutilizarlas luego desde cualquier chat del sistema.
-          </p>
-        </div>
       </div>
 
       <div className="grid gap-4 xl:grid-cols-2">
