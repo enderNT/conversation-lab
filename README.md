@@ -1,6 +1,6 @@
 # Conversation Lab
 
-Conversation Lab es un MVP para crear proyectos, conversar con un LLM dentro de sesiones persistidas, seleccionar uno o más turnos consecutivos y convertir ese slice en un caso estructurado solo después de una acción explícita del usuario.
+Conversation Lab es un MVP para crear proyectos, conversar con un LLM dentro de sesiones persistidas, seleccionar uno o más turnos consecutivos y mapear ese slice casi de forma directa hacia un dataset example DSPy exportable en JSONL.
 
 ## Stack
 
@@ -18,11 +18,11 @@ Conversation Lab es un MVP para crear proyectos, conversar con un LLM dentro de 
 3. Escribir un mensaje de usuario y enviarlo al LLM configurado.
 4. Guardar el turno del usuario y la respuesta del asistente como mensajes individuales.
 5. Seleccionar un rango consecutivo de turnos.
-6. Abrir el editor de caso desde esa selección.
-7. Completar etiquetas, artefactos, notas y estado.
-8. Guardar el caso manualmente.
-9. Revisar casos en la biblioteca.
-10. Cambiar estado y exportar casos aprobados en JSON.
+6. Abrir el editor DSPy desde esa selección.
+7. Ajustar el slice fuente, mapear campo por campo y revisar previews.
+8. Editar manualmente el `input JSON` y `output JSON` finales.
+9. Guardar dataset examples revisables.
+10. Exportar dataset examples a JSONL DSPy.
 
 ## Estructura
 
@@ -32,17 +32,19 @@ prisma/
 	seed.ts
 src/
 	app/
-		api/cases/export/route.ts
-		cases/
+		api/dataset-examples/export/route.ts
+		dataset-examples/
+		dataset-specs/
 		projects/
 		actions.ts
 	components/
 		app-shell.tsx
-		case-editor-form.tsx
+		dataset-example-editor.tsx
 		session-selection.tsx
 		status-badge.tsx
 	lib/
-		cases.ts
+		datasets.ts
+		dataset-specs.ts
 		prisma.ts
 		types.ts
 		utils.ts
@@ -152,16 +154,16 @@ Esta app está preparada para desplegarse en Coolify sin publicar un puerto host
 
 Solo usa `ports:` si quieres publicar un puerto del servidor directamente, por ejemplo `IP_DEL_SERVIDOR:3000`. Para una app web normal detrás del proxy de Coolify, no hace falta y suele ser justamente la causa del conflicto de puertos.
 
-## Export JSON
+## Export JSONL
 
-Export por defecto de casos aprobados:
+Export por defecto de dataset examples:
 
 ```bash
-curl http://localhost:3000/api/cases/export
+curl http://localhost:3000/api/dataset-examples/export
 ```
 
 Export filtrado por proyecto:
 
 ```bash
-curl "http://localhost:3000/api/cases/export?projectId=<project_id>"
+curl "http://localhost:3000/api/dataset-examples/export?projectId=<project_id>"
 ```

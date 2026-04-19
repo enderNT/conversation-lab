@@ -2,6 +2,9 @@ import type {
   ArtifactType,
   CaseReviewStatus,
   CaseStatus,
+  DatasetExampleReviewStatus,
+  DatasetFieldSide,
+  DatasetFormat,
   DerivedExampleStatus,
   GenerationMode,
   MessageRole,
@@ -208,4 +211,142 @@ export type ExportedDerivedExample = {
   validation_state: ValidationState;
   provenance: Prisma.JsonValue;
   exported_at: string;
+};
+
+export type JsonPrimitive = string | number | boolean | null;
+export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
+export type JsonObject = { [key: string]: JsonValue };
+
+export const DATASET_EXAMPLE_STATUSES = [
+  "draft",
+  "approved",
+  "rejected",
+  "exported",
+] as const satisfies ReadonlyArray<DatasetExampleReviewStatus>;
+
+export const DATASET_FORMATS = [
+  "dspy_jsonl",
+] as const satisfies ReadonlyArray<DatasetFormat>;
+
+export const DATASET_FIELD_SIDES = [
+  "input",
+  "output",
+] as const satisfies ReadonlyArray<DatasetFieldSide>;
+
+export const DATASET_SCHEMA_FIELD_TYPES = [
+  "string",
+  "integer",
+  "number",
+  "boolean",
+  "object",
+  "array",
+  "null",
+  "enum",
+  "datetime",
+  "conversation_turns",
+] as const;
+
+export const DATASET_MAPPING_SOURCES = [
+  "source.last_user_message",
+  "source.conversation_slice",
+  "source.surrounding_context",
+  "source.source_summary",
+  "source.session_notes",
+  "manual",
+  "constant",
+] as const;
+
+export const DATASET_TRANSFORMS = [
+  "trim",
+  "join_lines",
+  "pick_path",
+  "pick_turns",
+  "wrap_array",
+  "to_string",
+  "to_boolean",
+  "template",
+] as const;
+
+export type DatasetSchemaFieldType = (typeof DATASET_SCHEMA_FIELD_TYPES)[number];
+export type DatasetMappingSourceKey = (typeof DATASET_MAPPING_SOURCES)[number];
+export type DatasetTransformKey = (typeof DATASET_TRANSFORMS)[number];
+
+export type DatasetSchemaField = {
+  key: string;
+  type: DatasetSchemaFieldType;
+  required: boolean;
+  description: string;
+  enumValues?: string[];
+};
+
+export type DatasetSpecDefinition = {
+  name: string;
+  slug: string;
+  description: string;
+  datasetFormat: DatasetFormat;
+  inputSchema: DatasetSchemaField[];
+  outputSchema: DatasetSchemaField[];
+  mappingHints: JsonValue;
+  validationRules: JsonValue;
+  exportConfig: JsonValue;
+  isActive: boolean;
+  version: number;
+};
+
+export type SourceSliceMetadata = {
+  project_id: string;
+  session_id: string;
+  session_notes?: string;
+  selected_turn_ids: string[];
+  selected_range: {
+    start_order_index: number;
+    end_order_index: number;
+    turn_count: number;
+  };
+  provenance: {
+    source: string;
+    selection_mode: string;
+    conversation_version: number;
+  };
+};
+
+export type SourceSliceRecord = {
+  id?: string;
+  projectId: string;
+  sessionId: string;
+  title: string;
+  conversationSlice: ConversationSliceItem[];
+  surroundingContext: ConversationSliceItem[];
+  selectedTurnIds: string[];
+  lastUserMessage: string;
+  sourceSummary: string;
+  sourceMetadata: SourceSliceMetadata;
+};
+
+export type DatasetFieldMappingRecord = {
+  side: (typeof DATASET_FIELD_SIDES)[number];
+  fieldKey: string;
+  sourceKey: DatasetMappingSourceKey;
+  sourcePath: string;
+  transformChain: string[];
+  constantValueText: string;
+  manualValueText: string;
+  resolvedPreview?: JsonValue;
+};
+
+export type DatasetValidationState = {
+  structuralErrors: string[];
+  semanticWarnings: string[];
+  shapeMatches: boolean;
+};
+
+export type ExportedDatasetExampleRow = {
+  input: JsonObject;
+  output: JsonObject;
+  metadata: {
+    spec: string;
+    version: number;
+    sourceSliceId: string;
+    datasetExampleId: string;
+  };
 };

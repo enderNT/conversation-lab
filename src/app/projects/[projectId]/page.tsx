@@ -31,7 +31,7 @@ export default async function ProjectDetailPage({
           _count: {
             select: {
               messages: true,
-              cases: true,
+              sourceSlices: true,
             },
           },
         },
@@ -39,7 +39,7 @@ export default async function ProjectDetailPage({
       _count: {
         select: {
           sessions: true,
-          cases: true,
+          sourceSlices: true,
         },
       },
     },
@@ -70,8 +70,8 @@ export default async function ProjectDetailPage({
               <p className="mt-2 text-2xl font-semibold">{project._count.sessions}</p>
             </div>
             <div className="rounded-2xl border border-[var(--line)] bg-white/65 p-4">
-              <p className="text-sm text-[var(--muted)]">Cases</p>
-              <p className="mt-2 text-2xl font-semibold">{project._count.cases}</p>
+              <p className="text-sm text-[var(--muted)]">Slices</p>
+              <p className="mt-2 text-2xl font-semibold">{project._count.sourceSlices}</p>
             </div>
             <div className="rounded-2xl border border-[var(--line)] bg-white/65 p-4">
               <p className="text-sm text-[var(--muted)]">Created</p>
@@ -80,8 +80,8 @@ export default async function ProjectDetailPage({
           </div>
 
           <div className="mt-6 flex flex-wrap gap-3">
-            <Link href={`/cases?projectId=${project.id}`} className="button-secondary">
-              View project cases
+            <Link href={`/dataset-examples?projectId=${project.id}`} className="button-secondary">
+              View dataset examples
             </Link>
           </div>
         </div>
@@ -118,7 +118,7 @@ export default async function ProjectDetailPage({
                 title: session.title || "",
                 createdAt: session.createdAt.toISOString(),
                 messageCount: session._count.messages,
-                caseCount: session._count.cases,
+                caseCount: session._count.sourceSlices,
                 tags: session.tags.map((assignment) => ({
                   id: assignment.tag.id,
                   name: assignment.tag.name,

@@ -55,7 +55,7 @@ export function ProjectSessionCard({
           <p className="mt-2 text-2xl font-semibold">{session.messageCount}</p>
         </div>
         <div className="rounded-2xl border border-[var(--line)] bg-white/65 p-3">
-          <p className="text-[var(--muted)]">Cases</p>
+          <p className="text-[var(--muted)]">Slices</p>
           <p className="mt-2 text-2xl font-semibold">{session.caseCount}</p>
         </div>
       </div>

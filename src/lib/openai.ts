@@ -43,6 +43,23 @@ export function normalizeChatBaseUrl(value: string | null | undefined) {
   return parsedUrl.toString().replace(/\/+$/, "");
 }
 
+function normalizeChatBaseUrlSafe(value: string | null | undefined) {
+  try {
+    return {
+      value: normalizeChatBaseUrl(value),
+      error: null as string | null,
+    };
+  } catch (error) {
+    return {
+      value: null,
+      error:
+        error instanceof Error && error.message.trim()
+          ? error.message
+          : "Define una URL valida para el backend del chat.",
+    };
+  }
+}
+
 export function getConfiguredOpenAIBaseUrl() {
   return normalizeChatBaseUrl(process.env.OPENAI_BASE_URL);
 }
@@ -75,13 +92,16 @@ export function getChatRuntimeConfiguration(
   const configuredApiKey = normalizeChatApiKey(process.env.OPENAI_API_KEY);
   const apiKey = resolveChatApiKey(apiKeyOverride, configuredApiKey);
   const compatibleMode = isOpenAICompatibleModeEnabled();
-  const configuredBaseUrl = getConfiguredOpenAIBaseUrl();
-  const overrideBaseUrl = normalizeChatBaseUrl(baseUrlOverride);
-  const baseUrl = overrideBaseUrl || (compatibleMode ? configuredBaseUrl : null);
+  const configuredBaseUrl = normalizeChatBaseUrlSafe(process.env.OPENAI_BASE_URL);
+  const overrideBaseUrl = normalizeChatBaseUrlSafe(baseUrlOverride);
+  const baseUrl = overrideBaseUrl.value || (compatibleMode ? configuredBaseUrl.value : null);
   const providerLabel = baseUrl || compatibleMode ? "OpenAI-compatible" : "OpenAI";
-  const disabledReason = compatibleMode && !baseUrl
-    ? "Define OPENAI_BASE_URL o guarda una URL en la sesión para usar un backend OpenAI-compatible."
-    : null;
+  const disabledReason =
+    overrideBaseUrl.error ||
+    (baseUrlOverride?.trim() ? null : configuredBaseUrl.error) ||
+    (compatibleMode && !baseUrl
+      ? "Define OPENAI_BASE_URL o guarda una URL en la sesión para usar un backend OpenAI-compatible."
+      : null);
 
   return {
     enabled: disabledReason === null,

@@ -12,7 +12,7 @@ export default async function SessionChatPage({
 }) {
   const { projectId, sessionId } = await params;
 
-  const [session, projectSessions, llmConfigurations, sessionTags] = await Promise.all([
+  const [session, projectSessions, llmConfigurations, sessionTags, recentDatasetExamples] = await Promise.all([
     prisma.session.findUnique({
       where: { id: sessionId },
       include: {
@@ -27,15 +27,11 @@ export default async function SessionChatPage({
         },
         _count: {
           select: {
-            cases: true,
+            sourceSlices: true,
           },
         },
         messages: {
           orderBy: { orderIndex: "asc" },
-        },
-        cases: {
-          orderBy: { updatedAt: "desc" },
-          take: 6,
         },
       },
     }),
@@ -54,7 +50,7 @@ export default async function SessionChatPage({
         _count: {
           select: {
             messages: true,
-            cases: true,
+            sourceSlices: true,
           },
         },
       },
@@ -64,6 +60,22 @@ export default async function SessionChatPage({
     }),
     prisma.sessionTag.findMany({
       orderBy: { name: "asc" },
+    }),
+    prisma.datasetExample.findMany({
+      where: {
+        sourceSlice: {
+          sessionId,
+        },
+      },
+      orderBy: { updatedAt: "desc" },
+      take: 6,
+      include: {
+        sourceSlice: {
+          select: {
+            lastUserMessage: true,
+          },
+        },
+      },
     }),
   ]);
 
@@ -92,7 +104,7 @@ export default async function SessionChatPage({
             title: projectSession.title || "Chat sin titulo",
             createdAt: projectSession.createdAt.toISOString(),
             messageCount: projectSession._count.messages,
-            caseCount: projectSession._count.cases,
+            caseCount: projectSession._count.sourceSlices,
             tags: projectSession.tags.map((assignment) => ({
               id: assignment.tag.id,
               name: assignment.tag.name,
@@ -124,15 +136,15 @@ export default async function SessionChatPage({
           chatConnectionCheckedAt={session.chatConnectionCheckedAt?.toISOString() ?? null}
           chatConnectionVerifiedAt={session.chatConnectionVerifiedAt?.toISOString() ?? null}
           chatConnectionError={session.chatConnectionError}
-          caseCount={session._count.cases}
+          caseCount={session._count.sourceSlices}
           curationNotes={session.curationNotes || ""}
           systemPrompt={session.systemPrompt || ""}
-          recentCases={session.cases.map((caseItem) => ({
-            id: caseItem.id,
-            title: caseItem.title || "Untitled case",
-            status: caseItem.status,
-            lastUserMessage: caseItem.lastUserMessage,
-            updatedAt: caseItem.updatedAt.toISOString(),
+          recentCases={recentDatasetExamples.map((datasetExample) => ({
+            id: datasetExample.id,
+            title: datasetExample.title || "Untitled dataset example",
+            status: datasetExample.reviewStatus,
+            lastUserMessage: datasetExample.sourceSlice.lastUserMessage,
+            updatedAt: datasetExample.updatedAt.toISOString(),
           }))}
           messages={session.messages.map((message) => ({
             id: message.id,

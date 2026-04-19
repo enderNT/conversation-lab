@@ -19,23 +19,42 @@ export function ProjectCreateForm() {
   });
 
   return (
-    <form action={formAction} className="surface rounded-[1.75rem] p-5 sm:p-6">
-      <h2 className="text-lg font-semibold">Create project</h2>
-      <div className="mt-4 space-y-4">
+    <form action={formAction} className="surface rounded-[2rem] bg-white/88 p-6 sm:p-8">
+      <div>
+        <h2 className="editorial-heading text-[2.2rem] leading-none text-[var(--foreground)]">Create Project</h2>
+        <p className="mt-3 text-sm leading-6 text-[var(--muted)]">
+          Inicializa un entorno de curación nuevo y continúa directo al detalle del proyecto.
+        </p>
+      </div>
+      <div className="mt-6 space-y-5">
         <label className="block space-y-2">
-          <FormLabel required>Name</FormLabel>
-          <input name="name" className="field" placeholder="Atención dermocosmética" required />
+          <FormLabel required className="text-[0.68rem] uppercase tracking-[0.22em] text-[var(--muted)]">
+            Project Name
+          </FormLabel>
+          <input name="name" className="field min-h-14 rounded-[1rem]" placeholder="Atención dermocosmética" required />
         </label>
         <label className="block space-y-2">
-          <FormLabel>Description</FormLabel>
+          <FormLabel className="text-[0.68rem] uppercase tracking-[0.22em] text-[var(--muted)]">
+            Description
+          </FormLabel>
           <textarea
             name="description"
-            className="field min-h-28"
+            className="field min-h-36 rounded-[1rem]"
             placeholder="Objetivo del laboratorio, dominio conversacional, notas del proyecto."
           />
         </label>
-        <FormSubmitButton type="submit" className="button-primary w-full" pendingLabel="Creating project...">
-          Create Project
+        <FormSubmitButton
+          type="submit"
+          className="button-primary inline-flex w-full items-center justify-center gap-2 px-5 py-4 text-sm uppercase tracking-[0.2em]"
+          pendingLabel="Creating project..."
+        >
+          Create Workspace
+          <span
+            aria-hidden="true"
+            className="inline-flex size-5 items-center justify-center rounded-full border border-white/45 text-[0.8rem] leading-none"
+          >
+            +
+          </span>
         </FormSubmitButton>
       </div>
     </form>

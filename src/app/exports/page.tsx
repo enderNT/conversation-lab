@@ -1,20 +1,18 @@
 import Link from "next/link";
-import { DerivedExampleStatus } from "@prisma/client";
-import { prisma } from "@/lib/prisma";
-import { ensureDefaultTaskSpecs } from "@/lib/task-specs";
+import { DatasetExampleReviewStatus } from "@prisma/client";
 import { StatusBadge } from "@/components/status-badge";
+import { ensureDefaultDatasetSpecs } from "@/lib/dataset-specs";
+import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
 
 function buildExportHref(searchParams: {
   projectId?: string;
-  taskSpecId?: string;
+  datasetSpecId?: string;
   reviewStatus?: string;
-  approvedOnly?: string;
   from?: string;
   to?: string;
   version?: string;
-  format: "json" | "jsonl";
 }) {
   const params = new URLSearchParams();
 
@@ -24,7 +22,7 @@ function buildExportHref(searchParams: {
     }
   }
 
-  return `/api/derived-examples/export?${params.toString()}`;
+  return `/api/dataset-examples/export?${params.toString()}`;
 }
 
 export default async function ExportHubPage({
@@ -32,9 +30,8 @@ export default async function ExportHubPage({
 }: {
   searchParams: Promise<{
     projectId?: string;
-    taskSpecId?: string;
+    datasetSpecId?: string;
     reviewStatus?: string;
-    approvedOnly?: string;
     from?: string;
     to?: string;
     version?: string;
@@ -42,32 +39,25 @@ export default async function ExportHubPage({
 }) {
   const resolvedSearchParams = await searchParams;
 
-  await ensureDefaultTaskSpecs();
+  await ensureDefaultDatasetSpecs();
 
-  const [projects, taskSpecs, summary] = await Promise.all([
+  const [projects, datasetSpecs, summary] = await Promise.all([
     prisma.project.findMany({
       orderBy: { name: "asc" },
       select: { id: true, name: true },
     }),
-    prisma.taskSpec.findMany({
+    prisma.datasetSpec.findMany({
       where: { isActive: true },
       orderBy: { name: "asc" },
       select: { id: true, name: true, slug: true, version: true },
     }),
-    prisma.derivedExample.groupBy({
+    prisma.datasetExample.groupBy({
       by: ["reviewStatus"],
       _count: true,
     }),
   ]);
 
-  const jsonHref = buildExportHref({
-    ...resolvedSearchParams,
-    format: "json",
-  });
-  const jsonlHref = buildExportHref({
-    ...resolvedSearchParams,
-    format: "jsonl",
-  });
+  const exportHref = buildExportHref(resolvedSearchParams);
 
   return (
     <div className="space-y-8">
@@ -77,20 +67,20 @@ export default async function ExportHubPage({
             Export Hub
           </p>
           <h1 className="mt-3 text-4xl font-semibold tracking-tight">
-            Export reviewed derived examples in task-aligned JSON or JSONL with full provenance.
+            Exporta dataset examples a JSONL DSPy sin el pipeline viejo de artefactos.
           </h1>
           <p className="mt-4 max-w-3xl text-base leading-8 text-[var(--muted)]">
-            Filters apply by project, task spec, review status, date range, and version. Exported metadata keeps the source case, selected turns, artifacts used, editor, generation mode, and task-spec version.
+            Filtra por proyecto, spec, estado y versión; cada línea preserva el `spec`, la `version` y el `sourceSliceId`.
           </p>
         </div>
 
         <form action="/exports" className="surface rounded-[1.75rem] p-5 sm:p-6">
-          <h2 className="text-lg font-semibold">Export filters</h2>
+          <h2 className="text-lg font-semibold">Filtros de exportación</h2>
           <div className="mt-4 space-y-4">
             <label className="block space-y-2">
-              <span className="text-sm font-medium">Project</span>
+              <span className="text-sm font-medium">Proyecto</span>
               <select name="projectId" className="field" defaultValue={resolvedSearchParams.projectId || ""}>
-                <option value="">All projects</option>
+                <option value="">Todos</option>
                 {projects.map((project) => (
                   <option key={project.id} value={project.id}>
                     {project.name}
@@ -98,32 +88,31 @@ export default async function ExportHubPage({
                 ))}
               </select>
             </label>
+
             <label className="block space-y-2">
-              <span className="text-sm font-medium">Task spec</span>
-              <select name="taskSpecId" className="field" defaultValue={resolvedSearchParams.taskSpecId || ""}>
-                <option value="">All task specs</option>
-                {taskSpecs.map((taskSpec) => (
-                  <option key={taskSpec.id} value={taskSpec.id}>
-                    {taskSpec.name} (v{taskSpec.version})
+              <span className="text-sm font-medium">Dataset spec</span>
+              <select name="datasetSpecId" className="field" defaultValue={resolvedSearchParams.datasetSpecId || ""}>
+                <option value="">Todos</option>
+                {datasetSpecs.map((datasetSpec) => (
+                  <option key={datasetSpec.id} value={datasetSpec.id}>
+                    {datasetSpec.name} (v{datasetSpec.version})
                   </option>
                 ))}
               </select>
             </label>
+
             <label className="block space-y-2">
-              <span className="text-sm font-medium">Review status</span>
+              <span className="text-sm font-medium">Estado</span>
               <select name="reviewStatus" className="field" defaultValue={resolvedSearchParams.reviewStatus || ""}>
-                <option value="">All review states</option>
-                {Object.values(DerivedExampleStatus).map((status) => (
+                <option value="">Todos</option>
+                {Object.values(DatasetExampleReviewStatus).map((status) => (
                   <option key={status} value={status}>
                     {status}
                   </option>
                 ))}
               </select>
             </label>
-            <label className="inline-flex items-center gap-2 text-sm font-medium">
-              <input type="checkbox" name="approvedOnly" value="true" defaultChecked={resolvedSearchParams.approvedOnly === "true"} />
-              Approved only
-            </label>
+
             <div className="grid gap-4 sm:grid-cols-2">
               <label className="block space-y-2">
                 <span className="text-sm font-medium">From</span>
@@ -134,18 +123,25 @@ export default async function ExportHubPage({
                 <input type="date" name="to" className="field" defaultValue={resolvedSearchParams.to || ""} />
               </label>
             </div>
+
             <label className="block space-y-2">
-              <span className="text-sm font-medium">Version</span>
-              <input name="version" className="field" defaultValue={resolvedSearchParams.version || ""} placeholder="Task spec version or derived example version" />
+              <span className="text-sm font-medium">Versión</span>
+              <input
+                name="version"
+                className="field"
+                defaultValue={resolvedSearchParams.version || ""}
+                placeholder="Versión del dataset example"
+              />
             </label>
+
             <button type="submit" className="button-secondary w-full">
-              Apply filters
+              Aplicar filtros
             </button>
           </div>
         </form>
       </section>
 
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         {summary.map((row) => (
           <article key={row.reviewStatus} className="surface rounded-[1.75rem] p-5 sm:p-6">
             <div className="flex items-center justify-between gap-4">
@@ -153,23 +149,20 @@ export default async function ExportHubPage({
               <p className="text-3xl font-semibold">{row._count}</p>
             </div>
             <p className="mt-3 text-sm text-[var(--muted)]">
-              Derived examples in this review state.
+              Dataset examples en este estado.
             </p>
           </article>
         ))}
       </section>
 
       <section className="surface rounded-[1.75rem] p-5 sm:p-6">
-        <h2 className="text-lg font-semibold">Download</h2>
+        <h2 className="text-lg font-semibold">Descarga</h2>
         <p className="mt-2 text-sm text-[var(--muted)]">
-          Both formats align rows to the selected task spec export shape and preserve provenance metadata.
+          El archivo resultante usa una línea por example en formato `dspy_jsonl`.
         </p>
         <div className="mt-5 flex flex-wrap gap-3">
-          <Link href={jsonHref} className="button-primary">
-            Export JSON
-          </Link>
-          <Link href={jsonlHref} className="button-secondary">
-            Export JSONL
+          <Link href={exportHref} className="button-primary">
+            Exportar JSONL DSPy
           </Link>
         </div>
       </section>

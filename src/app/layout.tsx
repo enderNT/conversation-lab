@@ -1,23 +1,12 @@
 import type { Metadata } from "next";
-import { IBM_Plex_Mono, Space_Grotesk } from "next/font/google";
+import Script from "next/script";
 import { AppShell } from "@/components/app-shell";
 import "./globals.css";
-
-const headingFont = Space_Grotesk({
-  variable: "--font-heading",
-  subsets: ["latin"],
-});
-
-const monoFont = IBM_Plex_Mono({
-  variable: "--font-mono",
-  subsets: ["latin"],
-  weight: ["400", "500"],
-});
 
 export const metadata: Metadata = {
   title: "Conversation Lab",
   description:
-    "MVP para conversar con un LLM, revisar slices consecutivos y exportar casos intermedios.",
+    "MVP para conversar con un LLM, mapear slices hacia DSPy y exportar dataset examples en JSONL.",
 };
 
 const themeInitScript = `
@@ -46,11 +35,13 @@ export default function RootLayout({
   return (
     <html
       lang="es"
-      className={`${headingFont.variable} ${monoFont.variable} h-full antialiased`}
+      className="h-full antialiased"
       suppressHydrationWarning
     >
       <body className="h-full">
-        <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
+        <Script id="theme-init" strategy="beforeInteractive">
+          {themeInitScript}
+        </Script>
         <AppShell>{children}</AppShell>
       </body>
     </html>

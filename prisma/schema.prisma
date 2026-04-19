@@ -73,6 +73,22 @@ enum RelationType {
   derived_from_same_case
 }
 
+enum DatasetFormat {
+  dspy_jsonl
+}
+
+enum DatasetExampleReviewStatus {
+  draft
+  approved
+  rejected
+  exported
+}
+
+enum DatasetFieldSide {
+  input
+  output
+}
+
 model Project {
   id          String    @id @default(cuid())
   name        String
@@ -80,6 +96,7 @@ model Project {
   createdAt   DateTime  @default(now())
   sessions    Session[]
   cases       Case[]
+  sourceSlices SourceSlice[]
 }
 
 model LlmConfiguration {
@@ -121,6 +138,7 @@ model Session {
   project   Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
   messages  Message[]
   cases     Case[]
+  sourceSlices SourceSlice[]
   tags      SessionTagOnSession[]
 
   @@index([projectId, createdAt])
@@ -259,4 +277,90 @@ model ProjectionRelation {
 
   @@index([fromDerivedExampleId, relationType])
   @@index([toDerivedExampleId, relationType])
+}
+
+model SourceSlice {
+  id                    String           @id @default(cuid())
+  projectId             String
+  sessionId             String
+  title                 String?
+  conversationSliceJson Json
+  surroundingContextJson Json
+  selectedTurnIdsJson   Json
+  lastUserMessage       String
+  sourceSummary         String           @default("")
+  sourceMetadataJson    Json?
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
+  project               Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  session               Session          @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  datasetExamples       DatasetExample[]
+
+  @@index([projectId, createdAt])
+  @@index([sessionId, updatedAt])
+}
+
+model DatasetSpec {
+  id                String        @id @default(cuid())
+  name              String
+  slug              String        @unique
+  description       String        @default("")
+  datasetFormat     DatasetFormat @default(dspy_jsonl)
+  inputSchemaJson   Json
+  outputSchemaJson  Json
+  mappingHintsJson  Json
+  validationRulesJson Json
+  exportConfigJson  Json
+  isActive          Boolean       @default(true)
+  version           Int           @default(1)
+  createdBy         String        @default("system")
+  updatedBy         String        @default("system")
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  datasetExamples   DatasetExample[]
+
+  @@index([isActive, slug])
+}
+
+model DatasetExample {
+  id                  String                     @id @default(cuid())
+  sourceSliceId       String
+  datasetSpecId       String
+  title               String?
+  inputPayloadJson    Json
+  outputPayloadJson   Json
+  validationStateJson Json
+  provenanceJson      Json
+  reviewStatus        DatasetExampleReviewStatus @default(draft)
+  version             Int                        @default(1)
+  createdBy           String                     @default("human")
+  updatedBy           String                     @default("human")
+  createdAt           DateTime                   @default(now())
+  updatedAt           DateTime                   @updatedAt
+  sourceSlice         SourceSlice                @relation(fields: [sourceSliceId], references: [id], onDelete: Cascade)
+  datasetSpec         DatasetSpec                @relation(fields: [datasetSpecId], references: [id], onDelete: Cascade)
+  fieldMappings       DatasetFieldMapping[]
+
+  @@index([sourceSliceId, reviewStatus])
+  @@index([datasetSpecId, reviewStatus])
+}
+
+model DatasetFieldMapping {
+  id                 String           @id @default(cuid())
+  datasetExampleId   String
+  side               DatasetFieldSide
+  fieldKey           String
+  sourceKey          String
+  sourcePath         String?
+  transformChainJson Json
+  constantValueJson  Json?
+  manualValueJson    Json?
+  resolvedPreviewJson Json?
+  position           Int              @default(0)
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  datasetExample     DatasetExample   @relation(fields: [datasetExampleId], references: [id], onDelete: Cascade)
+
+  @@unique([datasetExampleId, side, fieldKey])
+  @@index([datasetExampleId, side])
 }

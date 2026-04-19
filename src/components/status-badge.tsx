@@ -1,3 +1,6 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 
 const statusTone = {
@@ -227,8 +230,27 @@ const darkStatusTone = {
 };
 
 export function StatusBadge({ status }: { status: string }) {
-  const isDarkTheme =
-    typeof document !== "undefined" && document.documentElement.dataset.theme === "dark";
+  const [isDarkTheme, setIsDarkTheme] = useState(false);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const syncTheme = () => {
+      setIsDarkTheme(root.dataset.theme === "dark");
+    };
+
+    syncTheme();
+
+    const observer = new MutationObserver(syncTheme);
+    observer.observe(root, {
+      attributes: true,
+      attributeFilter: ["data-theme"],
+    });
+
+    return () => {
+      observer.disconnect();
+    };
+  }, []);
+
   const toneMap = isDarkTheme ? darkStatusTone : statusTone;
   const tone = toneMap[status as keyof typeof toneMap] ?? toneMap.draft;
 

@@ -1,6 +1,9 @@
 @import "tailwindcss";
 
 :root {
+  --font-heading: "Avenir Next", "Trebuchet MS", "Segoe UI", sans-serif;
+  --font-editorial: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", "Times New Roman", serif;
+  --font-mono: "SFMono-Regular", "Menlo", "Monaco", "Liberation Mono", monospace;
   --background: #f3efe8;
   --foreground: #18232f;
   --card: rgba(255, 253, 249, 0.86);
@@ -214,6 +217,31 @@ textarea {
 
 .theme-overlay {
   background: var(--overlay-background);
+}
+
+.editorial-heading {
+  font-family: var(--font-editorial), serif;
+  letter-spacing: -0.045em;
+}
+
+.editorial-display {
+  font-family: var(--font-editorial), serif;
+  letter-spacing: -0.065em;
+  line-height: 0.92;
+}
+
+.section-kicker {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent) 16%, transparent);
+  background: color-mix(in srgb, var(--accent) 9%, white 72%);
+  color: var(--accent);
+  padding: 0.35rem 0.8rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
 }
 
 .typing-indicator {

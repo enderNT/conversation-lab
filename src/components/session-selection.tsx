@@ -181,9 +181,9 @@ export function SessionSelection({
   const hasBlockingOverlay =
     historyOpen || activePanel !== null || confirmState !== null || editConflictState !== null;
   const caseHref = selectionRange
-    ? `/projects/${projectId}/sessions/${sessionId}/cases/new?start=${selectionRange.start}&end=${selectionRange.end}`
+    ? `/projects/${projectId}/sessions/${sessionId}/dataset/new?start=${selectionRange.start}&end=${selectionRange.end}`
     : "#";
-  const caseLibraryHref = `/cases?projectId=${projectId}`;
+  const caseLibraryHref = `/dataset-examples?projectId=${projectId}`;
   const visibleMessages =
     retryingMessageId === null
       ? localMessages
@@ -913,7 +913,7 @@ export function SessionSelection({
       pushToast({
         title: curationNotesDraft.trim() ? "Notas guardadas" : "Notas eliminadas",
         description: curationNotesDraft.trim()
-          ? "Estas notas quedarán disponibles cuando conviertas la conversación en caso."
+          ? "Estas notas quedarán disponibles cuando abras el editor DSPy desde esta conversación."
           : "La sesión ya no tiene notas adicionales para curación.",
         variant: "success",
         durationMs: 5000,
@@ -1090,7 +1090,7 @@ export function SessionSelection({
                 <span>Proyecto: {projectName}</span>
                 <span>{formatDate(sessionCreatedAt)}</span>
                 <span>{messages.length} mensaje(s)</span>
-                <span>{caseCount} caso(s)</span>
+                <span>{caseCount} slice(s)</span>
               </div>
 
               {selectionRange ? (
@@ -1136,7 +1136,7 @@ export function SessionSelection({
                       className="flex w-full items-center justify-between rounded-[1rem] px-3 py-3 text-left text-sm font-medium transition hover:bg-black/5"
                       onClick={openCasesPanel}
                     >
-                      <span>Casos y selección</span>
+                      <span>Dataset y selección</span>
                       <span className="text-[var(--muted)]">Abrir panel</span>
                     </button>
                     <button
@@ -1189,7 +1189,7 @@ export function SessionSelection({
                               title: "Limpiar toda la conversación",
                               description:
                                 caseCount > 0
-                                  ? "Esto eliminará todos los mensajes de esta sesión, pero conservará los casos ya guardados."
+                                  ? "Esto eliminará todos los mensajes de esta sesión, pero conservará los dataset examples ya guardados."
                                   : "Esto eliminará todos los mensajes de esta sesión.",
                               confirmLabel: "Limpiar chat",
                               tone: "warning",
@@ -1208,7 +1208,7 @@ export function SessionSelection({
                             setToolsOpen(false);
                           }}
                         >
-                          <span>Biblioteca de casos</span>
+                          <span>Dataset examples</span>
                           <span className="text-[var(--muted)]">Abrir</span>
                         </Link>
                         <button
@@ -1222,7 +1222,7 @@ export function SessionSelection({
                               title: "Eliminar chat por completo",
                               description:
                                 caseCount > 0
-                                  ? `Esto eliminará la sesión completa junto con ${caseCount} caso(s) asociado(s). Esta acción no se puede deshacer.`
+                                  ? `Esto eliminará la sesión completa junto con ${caseCount} slice(s) asociados. Esta acción no se puede deshacer.`
                                   : "Esto eliminará la sesión completa. Esta acción no se puede deshacer.",
                               confirmLabel: "Eliminar chat",
                               tone: "danger",
@@ -1515,7 +1515,7 @@ export function SessionSelection({
                     Slice activo: turnos {selectionRange.start + 1} a {selectionRange.end + 1}
                   </p>
                   <p className="mt-1 text-amber-800">
-                    {selectedMessages.length} mensaje(s) listo(s) para revisar o convertir en caso.
+                    {selectedMessages.length} mensaje(s) listo(s) para mapear hacia DSPy.
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-3">
@@ -1531,7 +1531,7 @@ export function SessionSelection({
                       }
                     }}
                   >
-                    Crear caso
+                    Mapear a DSPy
                   </Link>
                 </div>
               </div>
@@ -1677,7 +1677,7 @@ export function SessionSelection({
                       {historyItem.messageCount} mensaje(s)
                     </span>
                     <span className="rounded-full border border-[var(--line)] bg-white/80 px-2.5 py-1">
-                      {historyItem.caseCount} caso(s)
+                      {historyItem.caseCount} slice(s)
                     </span>
                     {historyItem.tags.map((tag) => (
                       <span
@@ -1720,14 +1720,14 @@ export function SessionSelection({
       <SideDrawer
         open={activePanel === "notes"}
         title="Notas del chat"
-        description="Guarda contexto libre de esta sesión para reutilizarlo después durante la curación del caso."
+        description="Guarda contexto libre de esta sesión para reutilizarlo después cuando abras el editor DSPy."
         onClose={() => setActivePanel(null)}
       >
         <div className="space-y-5">
           <div className="rounded-[1.5rem] border border-[var(--line)] bg-white/65 p-4">
             <p className="text-xs uppercase tracking-[0.18em] text-[var(--muted)]">Uso</p>
             <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
-              Estas notas viven solo en este chat y aparecerán en el paso <span className="font-semibold text-[var(--foreground)]">Source</span> cuando crees un caso desde esta conversación.
+              Estas notas viven solo en este chat y aparecerán en el panel <span className="font-semibold text-[var(--foreground)]">Fuente</span> cuando mapees esta conversación a DSPy.
             </p>
           </div>
 
@@ -1737,7 +1737,7 @@ export function SessionSelection({
               className="field min-h-48"
               value={curationNotesDraft}
               onChange={(event) => setCurationNotesDraft(event.target.value)}
-              placeholder="Añade contexto, criterios, decisiones o recordatorios útiles para cuando esta sesión pase al pipeline de curación."
+              placeholder="Añade contexto, criterios o recordatorios útiles para cuando esta sesión pase al editor DSPy."
               disabled={isSavingNotes}
             />
           </label>
@@ -1789,8 +1789,8 @@ export function SessionSelection({
 
       <SideDrawer
         open={activePanel === "cases"}
-        title="Casos y selección"
-        description="Revisa el slice activo y consulta los casos recientes sin sacrificar espacio del transcript."
+        title="Dataset y selección"
+        description="Revisa el slice activo y consulta los dataset examples recientes sin sacrificar espacio del transcript."
         onClose={() => setActivePanel(null)}
       >
         <div className="space-y-6">
@@ -1798,7 +1798,7 @@ export function SessionSelection({
             value={contextTab}
             options={[
               { id: "selection", label: "Selección actual" },
-              { id: "cases", label: "Casos recientes" },
+              { id: "cases", label: "Examples recientes" },
             ]}
             onChange={setContextTab}
           />
@@ -1816,7 +1816,7 @@ export function SessionSelection({
                 </p>
                 <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
                   {selectionRange
-                    ? `${selectedMessages.length} mensaje(s) listo(s) para revisión manual o creación de caso.`
+                    ? `${selectedMessages.length} mensaje(s) listo(s) para revisión manual o mapping DSPy.`
                     : "Selecciona mensajes directamente desde el transcript para generar un slice consecutivo."}
                 </p>
 
@@ -1836,7 +1836,7 @@ export function SessionSelection({
                       }
                     }}
                   >
-                    Crear caso desde selección
+                    Mapear a DSPy desde selección
                   </Link>
                   <button
                     type="button"
@@ -1882,8 +1882,8 @@ export function SessionSelection({
               <div className="flex items-center justify-between gap-3">
                 <p className="text-sm text-[var(--muted)]">
                   {caseCount === 0
-                    ? "Esta sesión todavía no tiene casos guardados."
-                    : `${caseCount} caso(s) asociado(s) a esta sesión.`}
+                    ? "Esta sesión todavía no tiene dataset examples guardados."
+                    : `${caseCount} slice(s) asociados a esta sesión.`}
                 </p>
                 <Link href={caseLibraryHref} className="button-secondary">
                   Abrir biblioteca
@@ -1892,7 +1892,7 @@ export function SessionSelection({
 
               {recentCases.length === 0 ? (
                 <div className="rounded-[1.5rem] border border-dashed border-[var(--line)] px-4 py-6 text-sm text-[var(--muted)]">
-                  Todavía no se han guardado casos para esta sesión.
+                  Todavía no se han guardado dataset examples para esta sesión.
                 </div>
               ) : null}
 
@@ -1910,15 +1910,15 @@ export function SessionSelection({
                   <p className="mt-4 line-clamp-4 text-sm leading-7 text-[var(--muted-strong)]">
                     {caseItem.lastUserMessage}
                   </p>
-                  <Link href={`/cases/${caseItem.id}`} className="button-primary mt-5 inline-flex">
-                    Abrir caso
+                  <Link href={`/dataset-examples/${caseItem.id}`} className="button-primary mt-5 inline-flex">
+                    Abrir example
                   </Link>
                 </article>
               ))}
 
               {caseCount > recentCases.length ? (
                 <p className="text-sm text-[var(--muted)]">
-                  Mostrando {recentCases.length} caso(s) reciente(s). Usa la biblioteca para ver el resto.
+                  Mostrando {recentCases.length} example(s) recientes. Usa la biblioteca para ver el resto.
                 </p>
               ) : null}
             </div>
