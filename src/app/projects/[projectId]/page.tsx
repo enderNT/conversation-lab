@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { ProjectSessionCard } from "@/components/project-session-card";
 import { SessionCreateForm } from "@/components/session-create-form";
 import { prisma } from "@/lib/prisma";
+import { cn } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
@@ -23,22 +24,12 @@ function BackArrowIcon() {
   );
 }
 
-function LibraryGlyph() {
+function SparklesIcon() {
   return (
-    <svg aria-hidden="true" viewBox="0 0 24 24" className="size-6 fill-none stroke-current stroke-[1.6]">
-      <path d="M12 3.5v17" strokeLinecap="round" />
-      <path d="M8.25 7.25 12 3.5l3.75 3.75" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M5 20.5h14" strokeLinecap="round" />
-      <path d="M6.75 13.25a2.25 2.25 0 0 1 2.25-2.25" strokeLinecap="round" />
-      <path d="M17.25 13.25A2.25 2.25 0 0 0 15 11" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-function ChevronRightIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 24 24" className="size-4 fill-none stroke-current stroke-[1.8]">
-      <path d="m9 6 6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
+    <svg aria-hidden="true" viewBox="0 0 24 24" className="size-7 fill-none stroke-current stroke-[1.6]">
+      <path d="m12 3 1.4 4.1L17.5 8.5l-4.1 1.4L12 14l-1.4-4.1L6.5 8.5l4.1-1.4L12 3Z" />
+      <path d="m19 13 .8 2.2 2.2.8-2.2.8L19 19l-.8-2.2-2.2-.8 2.2-.8L19 13Z" />
+      <path d="m5 14 .9 2.4 2.4.9-2.4.9L5 20.5l-.9-2.3-2.3-.9 2.3-.9L5 14Z" />
     </svg>
   );
 }
@@ -54,14 +45,26 @@ function SortChevronIcon() {
 function ProjectMetricCard({
   label,
   value,
+  valueClassName,
 }: {
   label: string;
   value: ReactNode;
+  valueClassName?: string;
 }) {
   return (
-    <div className="rounded-[1.5rem] border border-[var(--line)] bg-white/72 p-4 shadow-[0_14px_30px_rgba(24,35,47,0.06)]">
-      <p className="text-[0.7rem] uppercase tracking-[0.22em] text-[var(--muted)]">{label}</p>
-      <div className="mt-3 text-[2rem] font-semibold leading-none text-[var(--foreground)]">{value}</div>
+    <div className="relative min-w-0 overflow-hidden rounded-[1.3rem] border border-[rgba(24,35,47,0.07)] bg-white/76 px-4 py-5 shadow-[0_14px_30px_rgba(24,35,47,0.05)]">
+      <div className="absolute inset-y-3 left-0 w-[3px] rounded-full bg-[var(--accent)]" />
+      <div className="pl-4">
+        <p className="text-[0.65rem] uppercase tracking-[0.24em] text-[var(--muted)]">{label}</p>
+        <div
+          className={cn(
+            "mt-4 min-w-0 text-[1.7rem] font-semibold leading-none tracking-[-0.04em] text-[var(--foreground)] sm:text-[1.85rem]",
+            valueClassName,
+          )}
+        >
+          {value}
+        </div>
+      </div>
     </div>
   );
 }
@@ -113,79 +116,67 @@ export default async function ProjectDetailPage({
 
   return (
     <div className="space-y-14 pb-8">
-      <section className="grid gap-10 pt-2 xl:grid-cols-[minmax(0,1.18fr)_430px] xl:items-start">
-        <div className="space-y-8 xl:pt-4">
+      <section className="grid gap-8 pt-2 xl:max-w-[82rem] xl:grid-cols-[minmax(0,1fr)_340px] xl:items-start">
+        <div className="space-y-8 xl:pr-4 xl:pt-3">
           <Link
             href="/"
-            className="inline-flex items-center gap-2 text-base text-[var(--muted-strong)] transition hover:text-[var(--foreground)]"
+            className="inline-flex items-center gap-2 text-sm text-[var(--muted-strong)] transition hover:text-[var(--foreground)]"
           >
             <BackArrowIcon />
             <span>Back to Projects</span>
           </Link>
 
-          <div className="space-y-5">
-            <h1 className="editorial-display max-w-5xl text-[clamp(3.4rem,7vw,5.8rem)] text-[var(--foreground)]">
+          <div className="max-w-[46rem] space-y-4">
+            <h1 className="editorial-heading text-[clamp(3rem,5vw,4.7rem)] leading-[0.95] text-[var(--accent-strong)]">
               {project.name}
             </h1>
-            <p className="max-w-4xl text-lg leading-9 text-[var(--muted-strong)]">
+            <p className="max-w-[38rem] text-[1.08rem] leading-[1.75] text-[var(--muted-strong)]">
               {project.description ||
                 "This workspace is ready to host new conversations, preserve useful slices, and keep the project archive coherent over time."}
             </p>
           </div>
 
-          <div className="surface rounded-[2.15rem] bg-white/84 p-6 sm:p-8">
-            <div className="max-w-3xl">
-              <h2 className="editorial-heading text-[2.35rem] leading-none text-[var(--foreground)] sm:text-[2.8rem]">
+          <div className="surface max-w-[54rem] rounded-[1.8rem] bg-white/90 p-6 sm:p-7">
+            <div className="max-w-[40rem]">
+              <h2 className="editorial-heading text-[2rem] leading-none text-[var(--foreground)] sm:text-[2.3rem]">
                 Initialize New Workspace Session
               </h2>
             </div>
-            <SessionCreateForm projectId={project.id} />
+            <SessionCreateForm
+              projectId={project.id}
+              datasetExamplesHref={`/dataset-examples?projectId=${project.id}`}
+            />
           </div>
         </div>
 
-        <div className="space-y-6 xl:pt-28">
-          <div className="grid gap-4 sm:grid-cols-3">
+        <div className="space-y-5 xl:pt-20">
+          <div className="grid gap-4 sm:grid-cols-3 xl:grid-cols-3">
             <ProjectMetricCard label="Sessions" value={project._count.sessions} />
             <ProjectMetricCard label="Slices" value={project._count.sourceSlices} />
-            <ProjectMetricCard label="Created" value={formatProjectCreatedAt(project.createdAt)} />
+            <ProjectMetricCard
+              label="Created"
+              value={formatProjectCreatedAt(project.createdAt)}
+              valueClassName="editorial-heading text-[1.15rem] leading-[1.02] tracking-[-0.03em] sm:text-[1.45rem]"
+            />
           </div>
 
-          <Link
-            href={`/dataset-examples?projectId=${project.id}`}
-            className="group relative block overflow-hidden rounded-[2.15rem] border border-[rgba(9,76,73,0.26)] bg-[linear-gradient(135deg,#0f6562_0%,#0d4f4e_55%,#0a3638_100%)] p-6 text-white shadow-[0_22px_52px_rgba(9,54,56,0.24)]"
-          >
-            <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.18),transparent_34%),radial-gradient(circle_at_bottom_right,rgba(132,227,214,0.14),transparent_28%)]" />
-            <div className="absolute -right-12 top-10 size-40 rounded-full border border-white/10 bg-white/5 blur-[2px]" />
-            <div className="absolute bottom-0 right-0 h-36 w-44 bg-[linear-gradient(180deg,transparent_0%,rgba(255,255,255,0.08)_100%)]" />
+          <aside className="relative overflow-hidden rounded-[1.8rem] border border-[rgba(9,76,73,0.2)] bg-[linear-gradient(135deg,#0f6663_0%,#135a58_42%,#0c4645_100%)] p-6 text-white shadow-[0_22px_52px_rgba(9,54,56,0.2)]">
+            <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(255,255,255,0.06)_0,rgba(255,255,255,0.02)_1px,transparent_1px),linear-gradient(180deg,rgba(255,255,255,0.05)_0,rgba(255,255,255,0.02)_1px,transparent_1px)] bg-[length:28px_28px] opacity-20" />
+            <div className="absolute -right-14 bottom-3 size-44 rounded-full border border-white/10 bg-white/10" />
+            <div className="absolute right-8 top-8 size-24 rounded-full bg-white/10 blur-xl" />
 
-            <div className="relative flex min-h-[18rem] flex-col justify-between gap-10">
-              <div className="inline-flex size-12 items-center justify-center rounded-[1.2rem] border border-white/18 bg-white/10 text-white/90">
-                <LibraryGlyph />
+            <div className="relative min-h-[11.5rem]">
+              <div className="inline-flex size-12 items-center justify-center rounded-[1.1rem] border border-white/16 bg-white/10 text-white/85">
+                <SparklesIcon />
               </div>
-
-              <div>
-                <p className="text-[0.74rem] uppercase tracking-[0.28em] text-white/72">Dataset Examples</p>
-                <h2 className="mt-4 editorial-heading text-[2.35rem] leading-none text-white">
-                  Explore Project Library
-                </h2>
-                <p className="mt-4 max-w-sm text-sm leading-7 text-white/74">
-                  Review the saved examples already connected to this project and continue curation inside the same
-                  archive context.
-                </p>
-              </div>
-
-              <div className="flex items-end justify-between gap-4">
-                <div className="flex flex-wrap gap-3 text-sm text-white/78">
-                  <span>{project._count.sessions} live sessions</span>
-                  <span>{project._count.sourceSlices} source slices</span>
-                </div>
-                <span className="inline-flex items-center gap-2 rounded-full border border-white/14 bg-white/10 px-4 py-2 text-sm font-semibold text-white transition group-hover:bg-white/14">
-                  View dataset examples
-                  <ChevronRightIcon />
-                </span>
-              </div>
+              <h2 className="editorial-heading mt-10 text-[2rem] leading-none text-white">
+                Project Archive Ready
+              </h2>
+              <p className="mt-4 max-w-[16rem] text-sm leading-7 text-white/78">
+                New sessions inherit this project context, while existing slices stay grouped in the same workspace.
+              </p>
             </div>
-          </Link>
+          </aside>
         </div>
       </section>
 
