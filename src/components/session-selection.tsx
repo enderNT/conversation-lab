@@ -18,6 +18,7 @@ import {
 import { FormLabel } from "@/components/form-label";
 import { SessionTagPicker } from "@/components/session-tag-picker";
 import { StatusBadge } from "@/components/status-badge";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { useToast } from "@/components/toast-provider";
 import { cn, formatDate } from "@/lib/utils";
 
@@ -74,7 +75,7 @@ type SessionSelectionProps = {
   projectId: string;
   sessionId: string;
   projectName: string;
-  sessionCreatedAt: string;
+  sessionTitle: string;
   sessionHistory: SessionHistoryPreview[];
   sessionTags: Array<{ id: string; name: string }>;
   availableSessionTags: Array<{ id: string; name: string }>;
@@ -100,7 +101,7 @@ export function SessionSelection({
   projectId,
   sessionId,
   projectName = "",
-  sessionCreatedAt,
+  sessionTitle = "",
   sessionHistory = [],
   sessionTags = [],
   availableSessionTags = [],
@@ -150,10 +151,10 @@ export function SessionSelection({
   const [isDeletingSession, setIsDeletingSession] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [activePanel, setActivePanel] = useState<"cases" | "settings" | "tags" | "notes" | null>(null);
+  const [activePanel, setActivePanel] = useState<"cases" | "notes" | "tags" | "settings" | null>(null);
   const [contextTab, setContextTab] = useState<"selection" | "cases">("selection");
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
-  const [toolsOpen, setToolsOpen] = useState(false);
+  const [sessionActionsExpanded, setSessionActionsExpanded] = useState(false);
   const [confirmState, setConfirmState] = useState<ConfirmState>(null);
   const formRef = useRef<HTMLFormElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -329,12 +330,8 @@ export function SessionSelection({
 
       if (headerMenuOpen) {
         setHeaderMenuOpen(false);
-        setToolsOpen(false);
+        setSessionActionsExpanded(false);
         return;
-      }
-
-      if (toolsOpen) {
-        setToolsOpen(false);
       }
     };
 
@@ -343,10 +340,10 @@ export function SessionSelection({
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [activePanel, confirmState, editConflictState, editingMessageId, headerMenuOpen, historyOpen, toolsOpen]);
+  }, [activePanel, confirmState, editConflictState, editingMessageId, headerMenuOpen, historyOpen]);
 
   useEffect(() => {
-    if (!headerMenuOpen && !toolsOpen) {
+    if (!headerMenuOpen) {
       return;
     }
 
@@ -356,15 +353,15 @@ export function SessionSelection({
       }
 
       setHeaderMenuOpen(false);
-      setToolsOpen(false);
+      setSessionActionsExpanded(false);
     };
 
-    window.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("mousedown", handlePointerDown);
 
     return () => {
-      window.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("mousedown", handlePointerDown);
     };
-  }, [headerMenuOpen, toolsOpen]);
+  }, [headerMenuOpen]);
 
   function normalizeDraftBaseUrl(value: string) {
     return value.trim().replace(/\/+$/, "");
@@ -570,34 +567,58 @@ export function SessionSelection({
     setHistoryOpen(false);
     setActivePanel("cases");
     setHeaderMenuOpen(false);
-    setToolsOpen(false);
+    setSessionActionsExpanded(false);
+  }
+
+  function closeHeaderMenu() {
+    setHeaderMenuOpen(false);
+    setSessionActionsExpanded(false);
   }
 
   function openSettingsPanel() {
     setHistoryOpen(false);
     setActivePanel("settings");
-    setHeaderMenuOpen(false);
-    setToolsOpen(false);
-  }
-
-  function openTagsPanel() {
-    setHistoryOpen(false);
-    setActivePanel("tags");
-    setHeaderMenuOpen(false);
-    setToolsOpen(false);
+    closeHeaderMenu();
   }
 
   function openNotesPanel() {
     setHistoryOpen(false);
     setActivePanel("notes");
-    setHeaderMenuOpen(false);
-    setToolsOpen(false);
+    closeHeaderMenu();
   }
 
-  function openHistoryPanel() {
-    setHistoryOpen(true);
-    setHeaderMenuOpen(false);
-    setToolsOpen(false);
+  function openTagsPanel() {
+    setHistoryOpen(false);
+    setActivePanel("tags");
+    closeHeaderMenu();
+  }
+
+  function openClearChatConfirmation() {
+    closeHeaderMenu();
+    setConfirmState({
+      action: "clear-chat",
+      title: "Limpiar toda la conversación",
+      description:
+        caseCount > 0
+          ? "Esto eliminará todos los mensajes de esta sesión, pero conservará los dataset examples ya guardados."
+          : "Esto eliminará todos los mensajes de esta sesión.",
+      confirmLabel: "Limpiar chat",
+      tone: "warning",
+    });
+  }
+
+  function openDeleteSessionConfirmation() {
+    closeHeaderMenu();
+    setConfirmState({
+      action: "delete-session",
+      title: "Eliminar chat por completo",
+      description:
+        caseCount > 0
+          ? `Esto eliminará la sesión completa junto con ${caseCount} slice(s) asociados. Esta acción no se puede deshacer.`
+          : "Esto eliminará la sesión completa. Esta acción no se puede deshacer.",
+      confirmLabel: "Eliminar chat",
+      tone: "danger",
+    });
   }
 
   function handleLoadSavedConfiguration() {
@@ -1035,203 +1056,154 @@ export function SessionSelection({
           : chatSettingsAreDirty
             ? "Cambios sin guardar"
             : "Chat pausado";
-  const composerStatusLabel = chatComposerBlocked
-    ? "Edición en curso"
-    : chatEnabled
-      ? "Listo para enviar"
-      : connectionSummary;
+  const sessionDisplayTitle = sessionTitle.trim() || "Sesión en curso";
+  const hasSelection = selectionRange !== null;
+  const turnCount = localMessages.length;
+  const composerPlaceholder = "Inquire further or define a new slice...";
 
   return (
     <>
-      <section className="surface relative flex h-full min-h-0 flex-1 flex-col overflow-hidden rounded-none border-y border-x-0">
-        <div className="absolute inset-x-0 top-0 h-40 bg-[radial-gradient(circle_at_top_right,rgba(15,95,92,0.16),transparent_44%)]" />
+      <section className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-[linear-gradient(180deg,rgba(250,247,241,0.98)_0%,rgba(243,238,230,0.98)_100%)]">
+        <div className="absolute inset-x-0 top-0 h-56 bg-[radial-gradient(circle_at_top_left,rgba(15,95,92,0.14),transparent_34%),radial-gradient(circle_at_top_right,rgba(15,95,92,0.08),transparent_36%)]" />
 
-        <header className="theme-strong-surface relative border-b border-[var(--line)] px-4 py-4 sm:px-6 lg:px-8">
-          <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-4">
-            <div className="flex items-center gap-3">
+        <header className="relative border-b border-[rgba(24,35,47,0.08)] bg-[rgba(248,245,238,0.88)] px-4 py-4 backdrop-blur-xl sm:px-6 xl:px-8">
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)_auto] xl:items-center">
+            <div className="flex min-w-0 items-center gap-3">
               <Link
                 href={`/projects/${projectId}`}
-                className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-[var(--line)] bg-white/65 text-[var(--foreground)] transition hover:bg-white/90"
+                className="inline-flex size-10 items-center justify-center rounded-full border border-[var(--line)] bg-white/80 text-[var(--muted-strong)] shadow-[0_8px_24px_rgba(24,35,47,0.06)] transition hover:-translate-y-px hover:bg-white hover:text-[var(--foreground)]"
                 aria-label="Regresar al proyecto"
                 title="Regresar al proyecto"
               >
-                <svg aria-hidden="true" viewBox="0 0 20 20" fill="none" className="h-5 w-5">
-                  <path
-                    d="M12.75 4.75 7.5 10l5.25 5.25"
-                    stroke="currentColor"
-                    strokeWidth="1.8"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
+                <BackArrowIcon />
               </Link>
+            </div>
 
-              <button
-                type="button"
-                className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-[var(--line)] bg-white/65 text-[var(--foreground)] transition hover:bg-white/90"
-                onClick={openHistoryPanel}
-                aria-expanded={historyOpen}
-                aria-label="Abrir historial de chats"
-                title="Abrir historial de chats"
+            <div className="min-w-0 text-left xl:text-center">
+              <p className="editorial-heading truncate text-[1.45rem] leading-[1.05] text-[var(--foreground)] sm:text-[1.8rem]">
+                {sessionDisplayTitle}
+              </p>
+              <div
+                className={cn(
+                  "mt-2 flex items-center gap-2 text-[0.72rem] font-semibold uppercase tracking-[0.22em] xl:justify-center",
+                  chatEnabled ? "text-emerald-600" : "text-amber-700",
+                )}
               >
-                <svg aria-hidden="true" viewBox="0 0 20 20" fill="none" className="h-5 w-5">
-                  <path
-                    d="M3.75 5h12.5M3.75 10h12.5M3.75 15h12.5"
-                    stroke="currentColor"
-                    strokeWidth="1.8"
-                    strokeLinecap="round"
-                  />
-                </svg>
-              </button>
-            </div>
-
-            <div className="min-w-0 place-self-center">
-              <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-center text-sm text-[var(--muted)]">
-                <span>Proyecto: {projectName}</span>
-                <span>{formatDate(sessionCreatedAt)}</span>
-                <span>{messages.length} mensaje(s)</span>
-                <span>{caseCount} slice(s)</span>
+                <span
+                  className={cn(
+                    "size-2 rounded-full",
+                    chatEnabled ? "bg-emerald-400" : "bg-amber-500",
+                  )}
+                  aria-hidden="true"
+                />
+                <span>{chatEnabled ? "LLM connected" : connectionSummary}</span>
               </div>
-
-              {selectionRange ? (
-                <div className="mt-3 flex justify-center">
-                  <button type="button" className="button-secondary" onClick={clearSelection}>
-                    Limpiar selección
-                  </button>
-                </div>
-              ) : null}
             </div>
 
-            <div className="flex justify-end">
-              <div ref={toolsRef} className="relative shrink-0">
-                <button
-                  type="button"
-                  className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-[var(--line)] bg-white/65 text-[var(--foreground)] transition hover:bg-white/90"
-                  onClick={() => {
+            <div className="flex items-center justify-end gap-2">
+              <div ref={toolsRef} className="relative">
+                <TopIconButton
+                  label="Acciones de chat"
+                  title="Acciones de chat"
+                  onClick={() =>
                     setHeaderMenuOpen((currentValue) => {
                       const nextValue = !currentValue;
 
                       if (!nextValue) {
-                        setToolsOpen(false);
+                        setSessionActionsExpanded(false);
                       }
 
                       return nextValue;
-                    });
-                  }}
-                  aria-expanded={headerMenuOpen}
-                  aria-label="Abrir menú del chat"
-                  title="Abrir menú del chat"
+                    })
+                  }
+                  active={headerMenuOpen}
                 >
-                  <svg aria-hidden="true" viewBox="0 0 20 20" fill="currentColor" className="h-5 w-5">
-                    <circle cx="10" cy="4" r="1.6" />
-                    <circle cx="10" cy="10" r="1.6" />
-                    <circle cx="10" cy="16" r="1.6" />
-                  </svg>
-                </button>
+                  <SettingsIcon />
+                </TopIconButton>
 
                 {headerMenuOpen ? (
-                  <div className="theme-drawer absolute right-0 top-[calc(100%+0.75rem)] z-30 w-[calc(100vw-2rem)] max-w-80 rounded-[1.25rem] border border-[var(--line)] p-2">
+                  <div className="theme-drawer absolute right-0 top-[calc(100%+0.85rem)] z-30 w-[min(22rem,calc(100vw-2rem))] rounded-[1.55rem] border border-[var(--line)] bg-[rgba(255,252,246,0.97)] p-2 shadow-[0_22px_58px_rgba(24,35,47,0.16)] backdrop-blur-xl">
+                    <div className="space-y-1">
+                      <MenuRowButton
+                        icon={<SettingsIcon />}
+                        label="Configuración LLM"
+                        description="Modelo y conexión"
+                        onClick={openSettingsPanel}
+                      />
+                      <MenuRowButton
+                        icon={<NotesIcon />}
+                        label="Contexto"
+                        description="Notas del chat"
+                        onClick={openNotesPanel}
+                      />
+                      <MenuRowButton
+                        icon={<TagIcon />}
+                        label="Taxonomía"
+                        description="Etiquetas"
+                        onClick={openTagsPanel}
+                      />
+                    </div>
+
+                    <div className="my-2 h-px bg-[rgba(24,35,47,0.08)]" />
+
+                    <div className="flex items-center justify-between gap-4 rounded-[1.2rem] px-3 py-3">
+                      <div>
+                        <p className="text-sm font-medium text-[var(--foreground)]">Tema</p>
+                        <p className="text-xs text-[var(--muted)]">Ajusta el modo visual</p>
+                      </div>
+                      <ThemeToggle />
+                    </div>
+
+                    <Link
+                      href={caseLibraryHref}
+                      className="flex items-center justify-between gap-4 rounded-[1.2rem] px-3 py-3 text-left transition hover:bg-[rgba(15,95,92,0.07)]"
+                      onClick={() => closeHeaderMenu()}
+                    >
+                      <div>
+                        <p className="text-sm font-medium text-[var(--foreground)]">Dataset examples</p>
+                        <p className="text-xs text-[var(--muted)]">Abrir biblioteca</p>
+                      </div>
+                      <span className="text-sm font-medium text-[var(--muted-strong)]">Abrir</span>
+                    </Link>
+
+                    <div className="my-2 h-px bg-[rgba(24,35,47,0.08)]" />
+
                     <button
                       type="button"
-                      className="flex w-full items-center justify-between rounded-[1rem] px-3 py-3 text-left text-sm font-medium transition hover:bg-black/5"
-                      onClick={openCasesPanel}
+                      className="flex w-full items-center justify-between gap-4 rounded-[1.2rem] px-3 py-3 text-left transition hover:bg-[rgba(15,95,92,0.07)]"
+                      onClick={() => setSessionActionsExpanded((currentValue) => !currentValue)}
                     >
-                      <span>Dataset y selección</span>
-                      <span className="text-[var(--muted)]">Abrir panel</span>
-                    </button>
-                    <button
-                      type="button"
-                      className="mt-1 flex w-full items-center justify-between rounded-[1rem] px-3 py-3 text-left text-sm font-medium transition hover:bg-black/5"
-                      onClick={openSettingsPanel}
-                    >
-                      <span>Configuración LLM</span>
-                      <span className="text-[var(--muted)]">Abrir modal</span>
-                    </button>
-                    <button
-                      type="button"
-                      className="mt-1 flex w-full items-center justify-between rounded-[1rem] px-3 py-3 text-left text-sm font-medium transition hover:bg-black/5"
-                      onClick={openNotesPanel}
-                    >
-                      <span>Notas del chat</span>
-                      <span className="text-[var(--muted)]">Abrir panel</span>
-                    </button>
-                    <button
-                      type="button"
-                      className="mt-1 flex w-full items-center justify-between rounded-[1rem] px-3 py-3 text-left text-sm font-medium transition hover:bg-black/5"
-                      onClick={openTagsPanel}
-                    >
-                      <span>Etiquetas del chat</span>
-                      <span className="text-[var(--muted)]">Abrir panel</span>
-                    </button>
-                    <button
-                      type="button"
-                      className="mt-1 flex w-full items-center justify-between rounded-[1rem] px-3 py-3 text-left text-sm font-medium transition hover:bg-black/5"
-                      onClick={() => setToolsOpen((currentValue) => !currentValue)}
-                      aria-expanded={toolsOpen}
-                    >
-                      <span>Herramientas</span>
-                      <span className="text-[var(--muted)]">{toolsOpen ? "Ocultar" : "Ver"}</span>
+                      <div>
+                        <p className="text-sm font-medium text-[var(--foreground)]">Acciones de la sesión</p>
+                        <p className="text-xs text-[var(--muted)]">Expandir opciones destructivas</p>
+                      </div>
+                      <DisclosureCaretIcon expanded={sessionActionsExpanded} />
                     </button>
 
-                    {toolsOpen ? (
-                      <div className="mt-2 border-t border-[var(--line)] pt-2">
-                        <div className="rounded-[1rem] px-3 py-2 text-sm text-[var(--muted)]">
-                          Acciones de baja frecuencia para esta sesión.
-                        </div>
+                    {sessionActionsExpanded ? (
+                      <div className="mt-2 space-y-2 rounded-[1.2rem] border border-[rgba(24,35,47,0.08)] bg-[rgba(248,245,238,0.9)] p-2">
                         <button
                           type="button"
-                          className="flex w-full items-center justify-between rounded-[1rem] px-3 py-3 text-left text-sm font-medium transition hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-60"
-                          onClick={() => {
-                            setHeaderMenuOpen(false);
-                            setToolsOpen(false);
-                            setConfirmState({
-                              action: "clear-chat",
-                              title: "Limpiar toda la conversación",
-                              description:
-                                caseCount > 0
-                                  ? "Esto eliminará todos los mensajes de esta sesión, pero conservará los dataset examples ya guardados."
-                                  : "Esto eliminará todos los mensajes de esta sesión.",
-                              confirmLabel: "Limpiar chat",
-                              tone: "warning",
-                            });
-                          }}
+                          className="flex w-full items-center justify-between gap-4 rounded-[1rem] px-3 py-3 text-left transition hover:bg-white/80 disabled:cursor-not-allowed disabled:opacity-50"
+                          onClick={openClearChatConfirmation}
                           disabled={isClearingChat || isDeletingSession || messages.length === 0}
                         >
-                          <span>Limpiar chat</span>
-                          <span className="text-[var(--muted)]">Mantiene la sesión</span>
+                          <div>
+                            <p className="text-sm font-medium text-[var(--foreground)]">Limpiar chat</p>
+                            <p className="text-xs text-[var(--muted)]">Mantiene la sesión</p>
+                          </div>
                         </button>
-                        <Link
-                          href={caseLibraryHref}
-                          className="flex items-center justify-between rounded-[1rem] px-3 py-3 text-sm font-medium transition hover:bg-black/5"
-                          onClick={() => {
-                            setHeaderMenuOpen(false);
-                            setToolsOpen(false);
-                          }}
-                        >
-                          <span>Dataset examples</span>
-                          <span className="text-[var(--muted)]">Abrir</span>
-                        </Link>
+
                         <button
                           type="button"
-                          className="mt-1 flex w-full items-center justify-between rounded-[1rem] bg-rose-600 px-3 py-3 text-left text-sm font-semibold text-white transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
-                          onClick={() => {
-                            setHeaderMenuOpen(false);
-                            setToolsOpen(false);
-                            setConfirmState({
-                              action: "delete-session",
-                              title: "Eliminar chat por completo",
-                              description:
-                                caseCount > 0
-                                  ? `Esto eliminará la sesión completa junto con ${caseCount} slice(s) asociados. Esta acción no se puede deshacer.`
-                                  : "Esto eliminará la sesión completa. Esta acción no se puede deshacer.",
-                              confirmLabel: "Eliminar chat",
-                              tone: "danger",
-                            });
-                          }}
+                          className="flex w-full items-center justify-between gap-4 rounded-[1rem] bg-rose-600 px-3 py-3 text-left text-white transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-50"
+                          onClick={openDeleteSessionConfirmation}
                           disabled={isDeletingSession || isClearingChat}
                         >
-                          <span>Eliminar chat</span>
-                          <span className="text-rose-100">Permanente</span>
+                          <div>
+                            <p className="text-sm font-medium">Eliminar chat</p>
+                            <p className="text-xs text-rose-100">Permanente</p>
+                          </div>
                         </button>
                       </div>
                     ) : null}
@@ -1243,390 +1215,517 @@ export function SessionSelection({
         </header>
 
         {errorMessage ? (
-          <div className="relative border-b border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 sm:px-6 lg:px-8">
+          <div className="relative border-b border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 sm:px-6 xl:px-8">
             {errorMessage}
           </div>
         ) : null}
 
         <div className="relative min-h-0 flex-1 overflow-hidden">
-          <div
-            ref={messagesRef}
-            className="flex h-full min-w-0 w-full flex-col gap-4 overflow-y-auto px-4 py-6 sm:px-6 lg:px-8"
-          >
-            {displayedMessages.length === 0 ? (
-              <div className="theme-soft-surface mx-auto flex min-h-full w-full max-w-3xl flex-1 items-center justify-center rounded-[2rem] border border-dashed border-[var(--line)] px-6 py-16 text-center text-sm leading-7 text-[var(--muted)]">
-                Esta sesión todavía no tiene conversación. Configura el modelo si hace falta y envía el primer mensaje desde el compositor inferior.
-              </div>
-            ) : null}
+          <div className="grid h-full min-h-0 xl:grid-cols-[18.5rem_minmax(0,1fr)]">
+            <aside className="hidden min-h-0 border-r border-[rgba(24,35,47,0.07)] bg-[rgba(247,243,236,0.55)] xl:flex xl:flex-col">
+              <div className="flex min-h-0 flex-1 flex-col px-6 py-8">
+                <div className="flex items-start gap-4">
+                  <div className="inline-flex size-14 shrink-0 items-center justify-center rounded-full bg-[var(--accent)] text-white shadow-[0_14px_32px_rgba(15,95,92,0.18)]">
+                    <ArchiveIcon />
+                  </div>
+                  <div className="min-w-0">
+                    <h2 className="editorial-heading text-[2rem] leading-none text-[var(--foreground)]">
+                      {sessionDisplayTitle}
+                    </h2>
+                    <p className="mt-2 text-[0.72rem] uppercase tracking-[0.22em] text-[var(--muted)]">
+                      Proyecto
+                    </p>
+                    <p className="mt-1 text-sm text-[var(--muted-strong)]">{projectName}</p>
+                    <p className="mono mt-3 break-all text-[0.68rem] uppercase tracking-[0.16em] text-[var(--muted)]">
+                      ID: {sessionId}
+                    </p>
+                  </div>
+                </div>
 
-            {displayedMessages.map((message) => {
-              const isSelected =
-                selectionRange !== null &&
-                message.orderIndex >= selectionRange.start &&
-                message.orderIndex <= selectionRange.end;
-              const isEditing = editingMessageId === message.id;
-              const editButtonDisabled =
-                isSending ||
-                isSavingEdit ||
-                retryingMessageId !== null ||
-                message.id === "__pending-user-message__";
-              const showRetryButton =
-                message.id !== "__pending-user-message__" &&
-                !isEditing &&
-                canRetryLastAssistantMessage &&
-                lastConversationMessage?.id === message.id;
+                <div className="mt-8 min-h-0 flex-1 overflow-hidden">
+                  <div className="max-h-full space-y-3 overflow-y-auto pr-1">
+                    {sessionHistory.map((historyItem) => {
+                      const isCurrentSession = historyItem.id === sessionId;
+                      const sessionItemContent = (
+                        <>
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-semibold text-[var(--foreground)]">
+                                {historyItem.title}
+                              </p>
+                              <p className="mt-1 text-xs text-[var(--muted)]">
+                                {formatCompactDate(historyItem.createdAt)}
+                              </p>
+                            </div>
 
-              return (
-                <div
-                  key={message.id}
-                  className={cn(
-                    "flex w-full",
-                    message.role === "user" ? "justify-end" : "justify-start",
-                  )}
-                >
-                  <div className="group relative w-full max-w-3xl">
-                    {!isEditing ? (
-                      <button
-                        type="button"
-                        onClick={() => handleSelect(message.orderIndex)}
-                        aria-pressed={isSelected}
-                        className={cn(
-                          "w-full rounded-[1.75rem] border px-4 py-4 text-left shadow-[0_12px_32px_rgba(15,23,42,0.06)] transition duration-150 hover:-translate-y-0.5 sm:px-5",
-                          message.role === "user"
-                            ? "bg-[var(--user-bubble)]"
-                            : "bg-[var(--assistant-bubble)]",
-                          isSelected
-                            ? "border-amber-300 ring-2 ring-amber-200"
-                            : "border-[var(--line)] hover:border-[var(--accent)]",
-                        )}
-                      >
-                        <div className="mb-3 flex flex-wrap items-center justify-between gap-3 pr-20 text-xs uppercase tracking-[0.18em] text-[var(--muted)]">
-                          <div className="flex items-center gap-2">
-                            <span
-                              className={cn(
-                                "rounded-full px-2.5 py-1 text-[10px] font-semibold",
-                                message.role === "user"
-                                  ? "bg-white/75 text-[var(--foreground)]"
-                                  : "bg-[rgba(15,95,92,0.12)] text-[var(--accent-strong)]",
-                              )}
-                            >
-                              {message.role === "user" ? "Usuario" : "Asistente"}
-                            </span>
-                            <span>Turno {message.orderIndex + 1}</span>
-                            {message.isEdited ? (
-                              <span className="rounded-full border border-[var(--line)] bg-white/70 px-2 py-0.5 text-[10px] font-semibold tracking-[0.12em] text-[var(--muted-strong)]">
-                                Editado
+                            {isCurrentSession ? (
+                              <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-900">
+                                Actual
                               </span>
                             ) : null}
                           </div>
-                          <span className="mono normal-case tracking-normal">{formatDate(message.createdAt)}</span>
-                        </div>
 
-                        <p className="whitespace-pre-wrap text-sm leading-7 text-[var(--muted-strong)] sm:text-[15px]">
-                          {message.text}
-                        </p>
-
-                        {isSelected ? (
-                          <div className="mt-4 text-xs font-semibold uppercase tracking-[0.18em] text-amber-900">
-                            Incluido en la selección actual
-                          </div>
-                        ) : null}
-                      </button>
-                    ) : (
-                      <div
-                        className={cn(
-                          "w-full rounded-[1.75rem] border px-4 py-4 text-left shadow-[0_12px_32px_rgba(15,23,42,0.06)] sm:px-5",
-                          message.role === "user"
-                            ? "bg-[var(--user-bubble)]"
-                            : "bg-[var(--assistant-bubble)]",
-                          "border-[var(--accent)] ring-2 ring-[color:color-mix(in_srgb,var(--accent)_22%,white)]",
-                        )}
-                      >
-                        <div className="mb-3 flex flex-wrap items-center justify-between gap-3 text-xs uppercase tracking-[0.18em] text-[var(--muted)]">
-                          <div className="flex items-center gap-2">
-                            <span
-                              className={cn(
-                                "rounded-full px-2.5 py-1 text-[10px] font-semibold",
-                                message.role === "user"
-                                  ? "bg-white/75 text-[var(--foreground)]"
-                                  : "bg-[rgba(15,95,92,0.12)] text-[var(--accent-strong)]",
-                              )}
-                            >
-                              {message.role === "user" ? "Usuario" : "Asistente"}
+                          <div className="mt-3 flex flex-wrap gap-2 text-xs text-[var(--muted)]">
+                            <span className="rounded-full border border-[var(--line)] bg-white/78 px-2.5 py-1">
+                              {historyItem.messageCount} msg
                             </span>
-                            <span>Turno {message.orderIndex + 1}</span>
-                            {message.isEdited ? (
-                              <span className="rounded-full border border-[var(--line)] bg-white/70 px-2 py-0.5 text-[10px] font-semibold tracking-[0.12em] text-[var(--muted-strong)]">
-                                Editado
+                            <span className="rounded-full border border-[var(--line)] bg-white/78 px-2.5 py-1">
+                              {historyItem.caseCount} slices
+                            </span>
+                            {historyItem.tags.slice(0, 2).map((tag) => (
+                              <span
+                                key={tag.id}
+                                className="rounded-full border border-[var(--line)] bg-white/78 px-2.5 py-1"
+                              >
+                                #{tag.name}
                               </span>
-                            ) : null}
+                            ))}
                           </div>
-                          <span className="mono normal-case tracking-normal">{formatDate(message.createdAt)}</span>
-                        </div>
+                        </>
+                      );
 
-                        <textarea
-                          ref={editTextareaRef}
-                          className="field min-h-32 w-full resize-y bg-white/80"
-                          value={editDraft}
-                          onChange={(event) => setEditDraft(event.target.value)}
-                          onKeyDown={(event) => {
-                            if (event.key === "Escape") {
-                              event.preventDefault();
-                              handleCancelEdit();
-                              return;
-                            }
-
-                            if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-                              event.preventDefault();
-                              void handleSaveEditedMessage();
-                            }
-                          }}
-                          aria-label={`Editar turno ${message.orderIndex + 1}`}
-                          disabled={isSavingEdit}
-                        />
-
-                        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-                          <p className="text-xs text-[var(--muted)]">
-                            <kbd className="rounded border border-[var(--line)] bg-white/70 px-1.5 py-0.5">
-                              Esc
-                            </kbd>{" "}
-                            cancela,{" "}
-                            <kbd className="rounded border border-[var(--line)] bg-white/70 px-1.5 py-0.5">
-                              Cmd/Ctrl + Enter
-                            </kbd>{" "}
-                            guarda.
-                          </p>
-                          <div className="flex flex-wrap gap-3">
-                            <button
-                              type="button"
-                              className="button-secondary"
-                              onClick={handleCancelEdit}
-                              disabled={isSavingEdit}
-                            >
-                              Cancelar
-                            </button>
-                            <button
-                              type="button"
-                              className="button-primary"
-                              onClick={() => {
-                                void handleSaveEditedMessage();
-                              }}
-                              disabled={!editCanSave}
-                            >
-                              {isSavingEdit ? "Guardando..." : "Guardar"}
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {message.id !== "__pending-user-message__" && !isEditing ? (
-                      <button
-                        type="button"
-                        className="absolute right-3 top-3 inline-flex items-center gap-2 rounded-full border border-[var(--line)] bg-white/92 px-3 py-1.5 text-xs font-semibold text-[var(--foreground)] opacity-0 shadow-sm transition group-hover:opacity-100 focus-visible:opacity-100 disabled:cursor-not-allowed disabled:opacity-50"
-                        onClick={() => handleRequestEdit(message.id)}
-                        disabled={editButtonDisabled}
-                        aria-label={`Editar turno ${message.orderIndex + 1}`}
-                        title={
-                          isSending
-                            ? "No puedes editar mientras el asistente responde"
-                            : `Editar turno ${message.orderIndex + 1}`
-                        }
-                      >
-                        <svg aria-hidden="true" viewBox="0 0 20 20" fill="none" className="h-3.5 w-3.5">
-                          <path
-                            d="M13.75 3.75a1.768 1.768 0 0 1 2.5 2.5l-8.5 8.5-3 0.5 0.5-3 8.5-8.5Z"
-                            stroke="currentColor"
-                            strokeWidth="1.6"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          />
-                        </svg>
-                        <span>Editar</span>
-                      </button>
-                    ) : null}
-
-                    {showRetryButton ? (
-                      <div className="mt-2 flex justify-start px-1">
-                        <button
-                          type="button"
-                          className="inline-flex items-center gap-2 rounded-full border border-[var(--line)] bg-white/88 px-3 py-1.5 text-xs font-semibold text-[var(--muted-strong)] shadow-sm transition hover:border-[var(--accent)] hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-50"
-                          onClick={() => {
-                            void handleRetryLastAssistantMessage();
-                          }}
-                          disabled={isSending || isSavingEdit || retryingMessageId !== null}
-                          aria-label={`Reintentar turno ${message.orderIndex + 1}`}
-                          title="Eliminar este último mensaje del asistente y generar uno nuevo"
-                        >
-                          <svg aria-hidden="true" viewBox="0 0 20 20" fill="none" className="h-3.5 w-3.5">
-                            <path
-                              d="M16.25 10a6.25 6.25 0 1 1-1.831-4.419"
-                              stroke="currentColor"
-                              strokeWidth="1.6"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                            />
-                            <path
-                              d="M12.75 3.75h3.5v3.5"
-                              stroke="currentColor"
-                              strokeWidth="1.6"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                            />
-                          </svg>
-                          <span>{retryingMessageId === message.id ? "Reintentando..." : "Reintentar"}</span>
-                        </button>
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
-              );
-            })}
-
-            {isSending || retryingMessageId !== null ? (
-              <div className="flex w-full justify-start">
-                <div className="relative w-full max-w-3xl rounded-[1.75rem] border border-[var(--line)] bg-[var(--assistant-bubble)] px-4 py-4 shadow-[0_12px_32px_rgba(15,23,42,0.06)] sm:px-5">
-                  <div className="mb-3 flex flex-wrap items-center justify-between gap-3 text-xs uppercase tracking-[0.18em] text-[var(--muted)]">
-                    <div className="flex items-center gap-2">
-                      <span className="rounded-full bg-[rgba(15,95,92,0.12)] px-2.5 py-1 text-[10px] font-semibold text-[var(--accent-strong)]">
-                        Asistente
-                      </span>
-                      <span>{retryingMessageId !== null ? "Reintentando" : "Escribiendo"}</span>
-                    </div>
-                  </div>
-
-                  <div className="typing-indicator" aria-label="Asistente escribiendo" role="status">
-                    <span className="typing-dot" />
-                    <span className="typing-dot" />
-                    <span className="typing-dot" />
-                  </div>
-                </div>
-              </div>
-            ) : null}
-          </div>
-        </div>
-
-        <footer className="theme-strong-surface relative border-t border-[var(--line)] px-4 py-4 sm:px-6 lg:px-8">
-          <div className="w-full min-w-0">
-            {selectionRange ? (
-              <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-[1.5rem] border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                <div>
-                  <p className="font-semibold">
-                    Slice activo: turnos {selectionRange.start + 1} a {selectionRange.end + 1}
-                  </p>
-                  <p className="mt-1 text-amber-800">
-                    {selectedMessages.length} mensaje(s) listo(s) para mapear hacia DSPy.
-                  </p>
-                </div>
-                <div className="flex flex-wrap gap-3">
-                  <button type="button" className="button-secondary" onClick={openCasesPanel}>
-                    Ver preview
-                  </button>
-                  <Link
-                    href={caseHref}
-                    className="button-primary inline-flex items-center justify-center"
-                    onClick={(event) => {
-                      if (!selectionRange) {
-                        event.preventDefault();
+                      if (isCurrentSession) {
+                        return (
+                          <article
+                            key={historyItem.id}
+                            className="rounded-[1.4rem] border border-emerald-200 bg-emerald-50/85 p-4 shadow-[0_12px_28px_rgba(15,95,92,0.08)]"
+                          >
+                            {sessionItemContent}
+                          </article>
+                        );
                       }
-                    }}
-                  >
-                    Mapear a DSPy
-                  </Link>
-                </div>
-              </div>
-            ) : null}
 
-            <form ref={formRef} onSubmit={handleSubmit} className="rounded-[1.5rem] border border-[var(--line)] bg-white/80 p-2.5 shadow-[0_12px_36px_rgba(15,23,42,0.08)] backdrop-blur">
-              <div className="mb-2 flex items-center justify-between gap-3 px-1">
-                <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-[var(--muted)]">
-                  <span
-                    className={cn(
-                      "h-2.5 w-2.5 shrink-0 rounded-full",
-                      chatEnabled ? "bg-emerald-500" : "bg-amber-500",
-                    )}
-                    aria-hidden="true"
-                  />
-                  <span className="font-medium text-[var(--muted-strong)]">
-                    {composerStatusLabel}
-                  </span>
-                  <span className="rounded-full border border-[var(--line)] bg-white/70 px-2 py-1 font-medium text-[var(--foreground)]">
-                    Conexión: {chatConnectionVerifiedAt ? "Verificada" : "Pendiente"}
-                  </span>
-                  {chatComposerBlocked ? (
-                    <span className="text-[var(--muted)]">Termina la edición para enviar</span>
-                  ) : chatEnabled ? (
-                    <span className="text-[var(--muted)]">Enter envía</span>
+                      return (
+                        <Link
+                          key={historyItem.id}
+                          href={`/projects/${projectId}/sessions/${historyItem.id}`}
+                          className="block rounded-[1.4rem] border border-[rgba(24,35,47,0.08)] bg-white/72 p-4 transition hover:-translate-y-0.5 hover:border-[rgba(15,95,92,0.24)] hover:shadow-[0_14px_30px_rgba(24,35,47,0.06)]"
+                        >
+                          {sessionItemContent}
+                        </Link>
+                      );
+                    })}
+
+                    {sessionHistory.length === 0 ? (
+                      <div className="rounded-[1.4rem] border border-dashed border-[var(--line)] px-4 py-6 text-sm text-[var(--muted)]">
+                        No hay otras sesiones para mostrar.
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+
+                <div className="mt-auto space-y-4 pt-8">
+                  <SidebarSection title="Metrics overview" soft>
+                    <div className="grid grid-cols-2 gap-3">
+                      <SidebarStat value={turnCount} label="Messages" />
+                      <SidebarStat value={caseCount} label="Slices" />
+                    </div>
+                  </SidebarSection>
+
+                  {hasSelection ? (
+                    <div className="space-y-3">
+                      <Link
+                        href={caseHref}
+                        className="inline-flex w-full items-center justify-center gap-3 rounded-full bg-[var(--accent)] px-5 py-4 text-sm font-semibold uppercase tracking-[0.22em] text-white transition hover:bg-[var(--accent-strong)]"
+                      >
+                        <span className="text-lg leading-none">+</span>
+                        <span>Crear slice</span>
+                      </Link>
+                      <button type="button" className="button-secondary w-full" onClick={clearSelection}>
+                        Limpiar slice
+                      </button>
+                    </div>
                   ) : (
                     <button
                       type="button"
-                      className="rounded-full border border-[var(--line)] bg-white/70 px-2.5 py-1 font-semibold text-[var(--foreground)] transition hover:bg-white"
-                      onClick={openSettingsPanel}
+                      className="inline-flex w-full items-center justify-center gap-3 rounded-full bg-[var(--accent)] px-5 py-4 text-sm font-semibold uppercase tracking-[0.22em] text-white transition hover:bg-[var(--accent-strong)]"
+                      onClick={openCasesPanel}
                     >
-                      Abrir LLM
+                      <span className="text-lg leading-none">+</span>
+                      <span>Crear slice</span>
                     </button>
                   )}
                 </div>
+              </div>
+            </aside>
 
-                <button
-                  type="submit"
-                  className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[var(--accent)] text-white transition hover:bg-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-60"
-                  disabled={
-                    !chatEnabled ||
-                    chatComposerBlocked ||
-                    isSending ||
-                    isClearingChat ||
-                    isDeletingSession ||
-                    draft.trim().length === 0
-                  }
-                  aria-label={isSending ? "Enviando mensaje" : "Enviar mensaje"}
-                  title={isSending ? "Enviando mensaje" : "Enviar mensaje"}
-                >
-                  {isSending ? (
-                    <span className="text-sm font-semibold">...</span>
-                  ) : (
-                    <svg
-                      aria-hidden="true"
-                      viewBox="0 0 20 20"
-                      fill="none"
-                      className="h-4 w-4"
-                    >
-                      <path
-                        d="M10 15V5M10 5L5.75 9.25M10 5l4.25 4.25"
-                        stroke="currentColor"
-                        strokeWidth="1.8"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                  )}
-                </button>
+            <section className="relative min-h-0 flex min-w-0 flex-col overflow-hidden px-4 py-5 sm:px-6 xl:px-8 xl:py-8">
+              <div className="mb-5 flex items-center gap-3">
+                <span className="inline-flex size-10 items-center justify-center rounded-full bg-[rgba(15,95,92,0.12)] text-[var(--accent)]">
+                  <SparklesIcon />
+                </span>
+                <div className="min-w-0">
+                  <p className="text-[0.72rem] font-semibold uppercase tracking-[0.24em] text-[var(--muted-strong)]">
+                    {chatProviderLabel ? `${chatProviderLabel} · asistente` : "Asistente"}
+                  </p>
+                  <p className="mt-1 text-[0.68rem] uppercase tracking-[0.22em] text-[var(--muted)]">
+                    {chatEnabled ? "LLM conectado y verificado" : connectionSummary}
+                  </p>
+                </div>
               </div>
 
-              <textarea
-                ref={textareaRef}
-                className="min-h-7 w-full resize-none bg-transparent px-2 py-1 text-sm leading-5 text-[var(--foreground)] outline-none placeholder:text-[var(--muted)]"
-                value={draft}
-                onChange={(event) => setDraft(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && !event.shiftKey) {
-                    event.preventDefault();
-                    formRef.current?.requestSubmit();
-                  }
-                }}
-                placeholder="Escribe aquí para conversar con el modelo. Enter envía, Shift+Enter agrega otra línea."
-                required
-                disabled={
-                  !chatEnabled ||
-                  chatComposerBlocked ||
-                  isSending ||
-                  isClearingChat ||
-                  isDeletingSession
-                }
-              />
-            </form>
+              <div ref={messagesRef} className="min-h-0 flex-1 overflow-y-auto pr-1">
+                <div className="mx-auto flex w-full max-w-[54rem] flex-col gap-8 pb-8">
+                  {displayedMessages.length === 0 ? (
+                    <div className="rounded-[2.25rem] border border-dashed border-[rgba(24,35,47,0.12)] bg-[rgba(255,252,246,0.78)] px-8 py-20 text-center shadow-[0_20px_56px_rgba(24,35,47,0.05)]">
+                      <p className="editorial-heading text-[2rem] leading-none text-[var(--foreground)]">
+                        La sesión está lista para comenzar
+                      </p>
+                      <p className="mt-4 text-sm leading-7 text-[var(--muted)]">
+                        Configura el modelo si hace falta y envía el primer mensaje desde el compositor inferior.
+                      </p>
+                    </div>
+                  ) : null}
+
+                  {displayedMessages.map((message) => {
+                    const isSelected =
+                      selectionRange !== null &&
+                      message.orderIndex >= selectionRange.start &&
+                      message.orderIndex <= selectionRange.end;
+                    const isEditing = editingMessageId === message.id;
+                    const isAssistant = message.role === "assistant";
+                    const editButtonDisabled =
+                      isSending ||
+                      isSavingEdit ||
+                      retryingMessageId !== null ||
+                      message.id === "__pending-user-message__";
+                    const showRetryButton =
+                      message.id !== "__pending-user-message__" &&
+                      !isEditing &&
+                      canRetryLastAssistantMessage &&
+                      lastConversationMessage?.id === message.id;
+
+                    return (
+                      <div
+                        key={message.id}
+                        className={cn("flex w-full", isAssistant ? "justify-start" : "justify-end")}
+                      >
+                        <div
+                          className={cn(
+                            "group relative w-full",
+                            isAssistant ? "max-w-[41rem]" : "max-w-[34rem]",
+                          )}
+                        >
+                          {!isEditing ? (
+                            <>
+                              {isAssistant ? (
+                                <div className="mb-3 flex items-center gap-3 px-2">
+                                  <span className="inline-flex size-9 items-center justify-center rounded-full bg-[rgba(15,95,92,0.12)] text-[var(--accent)]">
+                                    <SparklesIcon />
+                                  </span>
+                                  <div className="min-w-0">
+                                    <p className="text-[0.7rem] font-semibold uppercase tracking-[0.24em] text-[var(--muted-strong)]">
+                                      Asistente
+                                    </p>
+                                    <p className="mt-1 text-[0.68rem] uppercase tracking-[0.22em] text-[var(--muted)]">
+                                      Turno {message.orderIndex + 1}
+                                    </p>
+                                  </div>
+                                </div>
+                              ) : null}
+
+                              <button
+                                type="button"
+                                onClick={() => handleSelect(message.orderIndex)}
+                                aria-pressed={isSelected}
+                                className={cn(
+                                  "w-full rounded-[2rem] border px-5 py-5 text-left shadow-[0_18px_46px_rgba(24,35,47,0.06)] transition duration-150 hover:-translate-y-0.5 sm:px-6 sm:py-6",
+                                  isAssistant
+                                    ? "bg-[rgba(255,252,246,0.92)]"
+                                    : "bg-[var(--accent-strong)] text-white",
+                                  isSelected
+                                    ? "border-amber-300 ring-2 ring-amber-200"
+                                    : isAssistant
+                                      ? "border-[rgba(24,35,47,0.06)] hover:border-[rgba(15,95,92,0.28)]"
+                                      : "border-[rgba(15,95,92,0.68)] hover:border-[rgba(15,95,92,0.82)]",
+                                )}
+                              >
+                                <div
+                                  className={cn(
+                                    "mb-4 flex flex-wrap items-center justify-between gap-3 pr-16 text-[10px] font-semibold uppercase tracking-[0.2em]",
+                                    isAssistant ? "text-[var(--muted)]" : "text-white/72",
+                                  )}
+                                >
+                                  <div className="flex items-center gap-2">
+                                    <span>{isAssistant ? formatCompactDate(message.createdAt) : `Turno ${message.orderIndex + 1}`}</span>
+                                    {message.isEdited ? (
+                                      <span
+                                        className={cn(
+                                          "rounded-full border px-2 py-0.5 text-[9px]",
+                                          isAssistant
+                                            ? "border-[rgba(24,35,47,0.1)] bg-white/86 text-[var(--muted-strong)]"
+                                            : "border-white/20 bg-white/12 text-white/88",
+                                        )}
+                                      >
+                                        Editado
+                                      </span>
+                                    ) : null}
+                                  </div>
+                                  <span className="mono normal-case tracking-normal">
+                                    {isAssistant ? `#${message.orderIndex + 1}` : formatCompactDate(message.createdAt)}
+                                  </span>
+                                </div>
+
+                                <p
+                                  className={cn(
+                                    "whitespace-pre-wrap",
+                                    isAssistant
+                                      ? "editorial-heading text-[1.32rem] leading-[1.62] tracking-[-0.03em] text-[var(--foreground)] sm:text-[1.48rem]"
+                                      : "text-[1rem] leading-[1.75] text-white sm:text-[1.08rem]",
+                                  )}
+                                >
+                                  {message.text}
+                                </p>
+
+                                {isSelected ? (
+                                  <div
+                                    className={cn(
+                                      "mt-5 inline-flex rounded-full border px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.2em]",
+                                      isAssistant
+                                        ? "border-amber-300 bg-amber-50 text-amber-900"
+                                        : "border-white/25 bg-white/12 text-white",
+                                    )}
+                                  >
+                                    Incluido en el slice activo
+                                  </div>
+                                ) : null}
+                              </button>
+                            </>
+                          ) : (
+                            <div
+                              className={cn(
+                                "w-full rounded-[2rem] border px-5 py-5 text-left shadow-[0_18px_46px_rgba(24,35,47,0.06)] sm:px-6 sm:py-6",
+                                isAssistant ? "bg-[rgba(255,252,246,0.94)]" : "bg-[rgba(15,95,92,0.1)]",
+                                "border-[var(--accent)] ring-2 ring-[color:color-mix(in_srgb,var(--accent)_22%,white)]",
+                              )}
+                            >
+                              <div className="mb-4 flex flex-wrap items-center justify-between gap-3 text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--muted)]">
+                                <div className="flex items-center gap-2">
+                                  <span>{isAssistant ? "Asistente" : "Usuario"}</span>
+                                  <span>Turno {message.orderIndex + 1}</span>
+                                  {message.isEdited ? (
+                                    <span className="rounded-full border border-[rgba(24,35,47,0.1)] bg-white/86 px-2 py-0.5 text-[9px] text-[var(--muted-strong)]">
+                                      Editado
+                                    </span>
+                                  ) : null}
+                                </div>
+                                <span className="mono normal-case tracking-normal">{formatCompactDate(message.createdAt)}</span>
+                              </div>
+
+                              <textarea
+                                ref={editTextareaRef}
+                                className="field min-h-32 w-full resize-y bg-white/84"
+                                value={editDraft}
+                                onChange={(event) => setEditDraft(event.target.value)}
+                                onKeyDown={(event) => {
+                                  if (event.key === "Escape") {
+                                    event.preventDefault();
+                                    handleCancelEdit();
+                                    return;
+                                  }
+
+                                  if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                                    event.preventDefault();
+                                    void handleSaveEditedMessage();
+                                  }
+                                }}
+                                aria-label={`Editar turno ${message.orderIndex + 1}`}
+                                disabled={isSavingEdit}
+                              />
+
+                              <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                                <p className="text-xs text-[var(--muted)]">
+                                  <kbd className="rounded border border-[var(--line)] bg-white/70 px-1.5 py-0.5">
+                                    Esc
+                                  </kbd>{" "}
+                                  cancela,{" "}
+                                  <kbd className="rounded border border-[var(--line)] bg-white/70 px-1.5 py-0.5">
+                                    Cmd/Ctrl + Enter
+                                  </kbd>{" "}
+                                  guarda.
+                                </p>
+                                <div className="flex flex-wrap gap-3">
+                                  <button
+                                    type="button"
+                                    className="button-secondary"
+                                    onClick={handleCancelEdit}
+                                    disabled={isSavingEdit}
+                                  >
+                                    Cancelar
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="button-primary"
+                                    onClick={() => {
+                                      void handleSaveEditedMessage();
+                                    }}
+                                    disabled={!editCanSave}
+                                  >
+                                    {isSavingEdit ? "Guardando..." : "Guardar"}
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+
+                          {message.id !== "__pending-user-message__" && !isEditing ? (
+                            <button
+                              type="button"
+                              className="absolute right-3 top-3 inline-flex items-center gap-2 rounded-full border border-[rgba(24,35,47,0.08)] bg-white/94 px-3 py-1.5 text-xs font-semibold text-[var(--foreground)] opacity-0 shadow-sm transition group-hover:opacity-100 focus-visible:opacity-100 disabled:cursor-not-allowed disabled:opacity-50"
+                              onClick={() => handleRequestEdit(message.id)}
+                              disabled={editButtonDisabled}
+                              aria-label={`Editar turno ${message.orderIndex + 1}`}
+                              title={
+                                isSending
+                                  ? "No puedes editar mientras el asistente responde"
+                                  : `Editar turno ${message.orderIndex + 1}`
+                              }
+                            >
+                              <EditIcon />
+                              <span>Editar</span>
+                            </button>
+                          ) : null}
+
+                          {showRetryButton ? (
+                            <div className="mt-3 flex justify-start px-2">
+                              <button
+                                type="button"
+                                className="inline-flex items-center gap-2 rounded-full border border-[var(--line)] bg-white/88 px-3 py-1.5 text-xs font-semibold text-[var(--muted-strong)] shadow-sm transition hover:border-[var(--accent)] hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-50"
+                                onClick={() => {
+                                  void handleRetryLastAssistantMessage();
+                                }}
+                                disabled={isSending || isSavingEdit || retryingMessageId !== null}
+                                aria-label={`Reintentar turno ${message.orderIndex + 1}`}
+                                title="Eliminar este último mensaje del asistente y generar uno nuevo"
+                              >
+                                <RetryIcon />
+                                <span>{retryingMessageId === message.id ? "Reintentando..." : "Reintentar"}</span>
+                              </button>
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  {isSending || retryingMessageId !== null ? (
+                    <div className="flex w-full justify-start">
+                      <div className="w-full max-w-[41rem]">
+                        <div className="mb-3 flex items-center gap-3 px-2">
+                          <span className="inline-flex size-9 items-center justify-center rounded-full bg-[rgba(15,95,92,0.12)] text-[var(--accent)]">
+                            <SparklesIcon />
+                          </span>
+                          <div className="min-w-0">
+                            <p className="text-[0.7rem] font-semibold uppercase tracking-[0.24em] text-[var(--muted-strong)]">
+                              Asistente
+                            </p>
+                            <p className="mt-1 text-[0.68rem] uppercase tracking-[0.22em] text-[var(--muted)]">
+                              {retryingMessageId !== null ? "Reintentando" : "Escribiendo"}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="rounded-[2rem] border border-[rgba(24,35,47,0.06)] bg-[rgba(255,252,246,0.92)] px-5 py-5 shadow-[0_18px_46px_rgba(24,35,47,0.06)] sm:px-6 sm:py-6">
+                          <div className="typing-indicator" aria-label="Asistente escribiendo" role="status">
+                            <span className="typing-dot" />
+                            <span className="typing-dot" />
+                            <span className="typing-dot" />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+
+              <div className="mx-auto mt-4 w-full max-w-[54rem]">
+                {hasSelection ? (
+                  <div className="mb-4 flex flex-col gap-4 rounded-[1.8rem] border border-amber-200 bg-[rgba(252,246,229,0.95)] px-5 py-4 text-amber-950 shadow-[0_16px_36px_rgba(196,146,42,0.08)] sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="text-[0.72rem] font-semibold uppercase tracking-[0.22em] text-amber-700">
+                        Slice activo
+                      </p>
+                      <p className="mt-2 text-lg font-semibold">
+                        Turnos {selectionRange.start + 1} a {selectionRange.end + 1}
+                      </p>
+                      <p className="mt-1 text-sm text-amber-800">
+                        {selectedMessages.length} mensaje(s) listos para mapear hacia DSPy.
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-3">
+                      <button type="button" className="button-secondary" onClick={openCasesPanel}>
+                        Ver preview
+                      </button>
+                      <button type="button" className="button-secondary" onClick={clearSelection}>
+                        Limpiar slice
+                      </button>
+                      <Link
+                        href={caseHref}
+                        className="button-primary inline-flex items-center justify-center"
+                        onClick={(event) => {
+                          if (!selectionRange) {
+                            event.preventDefault();
+                          }
+                        }}
+                      >
+                        Crear slice
+                      </Link>
+                    </div>
+                  </div>
+                ) : null}
+
+                <form
+                  ref={formRef}
+                  onSubmit={handleSubmit}
+                  className="rounded-[1.85rem] border border-[rgba(24,35,47,0.05)] bg-white/96 p-1.5 shadow-[0_20px_54px_rgba(24,35,47,0.08)] backdrop-blur"
+                >
+                  <div className="flex items-center gap-3 px-2 py-2 sm:px-3">
+                    <div className="flex-1 px-3 sm:px-5">
+                      <textarea
+                        ref={textareaRef}
+                        className="min-h-[3.55rem] w-full resize-none bg-transparent py-2 text-[1rem] leading-7 text-[var(--foreground)] outline-none placeholder:text-[color:rgba(102,114,125,0.68)] sm:text-[1.04rem]"
+                        value={draft}
+                        onChange={(event) => setDraft(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" && !event.shiftKey) {
+                            event.preventDefault();
+                            formRef.current?.requestSubmit();
+                          }
+                        }}
+                        placeholder={composerPlaceholder}
+                        required
+                        disabled={
+                          !chatEnabled ||
+                          chatComposerBlocked ||
+                          isSending ||
+                          isClearingChat ||
+                          isDeletingSession
+                        }
+                      />
+                    </div>
+
+                    <button
+                      type="submit"
+                      className="inline-flex h-[3.9rem] w-[3.9rem] shrink-0 items-center justify-center rounded-[1.12rem] bg-[var(--accent-strong)] text-white transition hover:bg-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-45"
+                      disabled={
+                        !chatEnabled ||
+                        chatComposerBlocked ||
+                        isSending ||
+                        isClearingChat ||
+                        isDeletingSession ||
+                        draft.trim().length === 0
+                      }
+                      aria-label={isSending ? "Enviando mensaje" : "Enviar mensaje"}
+                      title={isSending ? "Enviando mensaje" : "Enviar mensaje"}
+                    >
+                      {isSending ? <span className="text-sm font-semibold">...</span> : <SendIcon />}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </section>
           </div>
-        </footer>
+        </div>
       </section>
 
       <ChatHistoryDrawer
@@ -1727,7 +1826,11 @@ export function SessionSelection({
           <div className="rounded-[1.5rem] border border-[var(--line)] bg-white/65 p-4">
             <p className="text-xs uppercase tracking-[0.18em] text-[var(--muted)]">Uso</p>
             <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
-              Estas notas viven solo en este chat y aparecerán en el panel <span className="font-semibold text-[var(--foreground)]">Fuente</span> cuando mapees esta conversación a DSPy.
+              Estas notas viven solo en este chat y aparecerán en el panel
+              {" "}
+              <span className="font-semibold text-[var(--foreground)]">Fuente</span>
+              {" "}
+              cuando mapees esta conversación a DSPy.
             </p>
           </div>
 
@@ -1769,9 +1872,7 @@ export function SessionSelection({
         <div className="space-y-5">
           <div className="rounded-[1.5rem] border border-[var(--line)] bg-white/65 p-4">
             <p className="text-xs uppercase tracking-[0.18em] text-[var(--muted)]">Sesión actual</p>
-            <p className="mt-2 text-lg font-semibold text-[var(--foreground)]">
-              {projectName}
-            </p>
+            <p className="mt-2 text-lg font-semibold text-[var(--foreground)]">{projectName}</p>
             <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
               Usa etiquetas para clasificar este chat y encontrarlo más rápido después.
             </p>
@@ -1967,7 +2068,8 @@ export function SessionSelection({
                 </select>
               </label>
               <p className="text-sm text-[var(--muted)]">
-                La selección carga modelo, URL y API key al borrador actual. Si la configuración trae prompt, también lo aplica.
+                La selección carga modelo, URL y API key al borrador actual. Si la configuración trae prompt, también lo
+                aplica.
               </p>
             </div>
             <div className="flex items-end">
@@ -1995,7 +2097,8 @@ export function SessionSelection({
                 />
               </label>
               <p className="text-sm text-[var(--muted)]">
-                Esto guarda el modelo, la URL, la API key y el prompt del borrador actual para reutilizarlos en cualquier proyecto.
+                Esto guarda el modelo, la URL, la API key y el prompt del borrador actual para reutilizarlos en cualquier
+                proyecto.
               </p>
             </div>
             <div className="flex items-end">
@@ -2181,6 +2284,220 @@ export function SessionSelection({
         }}
       />
     </>
+  );
+}
+
+function formatCompactDate(date: Date | string) {
+  const value = typeof date === "string" ? new Date(date) : date;
+
+  return new Intl.DateTimeFormat("es-MX", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(value);
+}
+
+function TopIconButton({
+  label,
+  title,
+  onClick,
+  active = false,
+  children,
+}: {
+  label: string;
+  title: string;
+  onClick: () => void;
+  active?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      className={cn(
+        "inline-flex size-11 items-center justify-center rounded-full border text-[var(--foreground)] shadow-[0_8px_24px_rgba(24,35,47,0.08)] transition hover:-translate-y-px",
+        active
+          ? "border-[rgba(15,95,92,0.24)] bg-[rgba(15,95,92,0.12)]"
+          : "border-[var(--line)] bg-white/82 hover:bg-white",
+      )}
+      onClick={onClick}
+      aria-label={label}
+      title={title}
+    >
+      {children}
+    </button>
+  );
+}
+
+function MenuRowButton({
+  icon,
+  label,
+  description,
+  onClick,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  description: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex w-full items-center gap-3 rounded-[1.2rem] px-3 py-3 text-left transition hover:bg-[rgba(15,95,92,0.07)]"
+    >
+      <span className="inline-flex size-10 shrink-0 items-center justify-center rounded-full bg-[rgba(24,35,47,0.05)] text-[var(--muted-strong)]">
+        {icon}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-sm font-medium text-[var(--foreground)]">{label}</span>
+        <span className="mt-1 block text-xs text-[var(--muted)]">{description}</span>
+      </span>
+    </button>
+  );
+}
+
+function DisclosureCaretIcon({ expanded }: { expanded: boolean }) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 20 20"
+      className={cn("size-4 fill-none stroke-current stroke-[1.7] text-[var(--muted-strong)] transition", expanded ? "rotate-180" : "")}
+    >
+      <path d="m5 7.5 5 5 5-5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function SidebarSection({
+  title,
+  soft = false,
+  className,
+  children,
+}: {
+  title: string;
+  soft?: boolean;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section
+      className={cn(
+        "rounded-[1.7rem] border p-5 shadow-[0_16px_36px_rgba(24,35,47,0.05)]",
+        soft
+          ? "border-[rgba(24,35,47,0.05)] bg-[rgba(234,228,217,0.62)]"
+          : "border-[rgba(24,35,47,0.07)] bg-[rgba(255,252,246,0.76)]",
+        className,
+      )}
+    >
+      <p className="text-[0.72rem] font-semibold uppercase tracking-[0.24em] text-[var(--muted)]">
+        {title}
+      </p>
+      <div className="mt-4">{children}</div>
+    </section>
+  );
+}
+
+function SidebarStat({
+  value,
+  label,
+}: {
+  value: string | number;
+  label: string;
+}) {
+  return (
+    <div className="rounded-[1.15rem] bg-white/82 px-4 py-4">
+      <p className="editorial-heading text-[2rem] leading-none text-[var(--foreground)]">{value}</p>
+      <p className="mt-2 text-[0.68rem] uppercase tracking-[0.22em] text-[var(--muted)]">{label}</p>
+    </div>
+  );
+}
+
+function BackArrowIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" className="size-4 fill-none stroke-current stroke-[1.8]">
+      <path d="M19 12H5" strokeLinecap="round" />
+      <path d="m11 18-6-6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function SparklesIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" className="size-4 fill-none stroke-current stroke-[1.7]">
+      <path d="m12 3 1.4 4.1L17.5 8.5l-4.1 1.4L12 14l-1.4-4.1L6.5 8.5l4.1-1.4L12 3Z" />
+      <path d="m18.6 14.1.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2Z" />
+      <path d="m5.1 13.8.7 1.9 1.9.7-1.9.7-.7 1.9-.7-1.9-1.9-.7 1.9-.7.7-1.9Z" />
+    </svg>
+  );
+}
+
+function ArchiveIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" className="size-6 fill-none stroke-current stroke-[1.8]">
+      <path d="M5 7.25h14" strokeLinecap="round" />
+      <path d="M7 7.25V17a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V7.25" strokeLinecap="round" />
+      <path d="M9.75 4.5h4.5" strokeLinecap="round" />
+      <path d="M12 10v4.5" strokeLinecap="round" />
+      <path d="M10.25 12.25H13.75" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function NotesIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" className="size-4 fill-none stroke-current stroke-[1.8]">
+      <path d="M12 17.5v-5" strokeLinecap="round" />
+      <path d="M12 8.75h.01" strokeLinecap="round" />
+      <circle cx="12" cy="12" r="8.25" />
+    </svg>
+  );
+}
+
+function TagIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" className="size-4 fill-none stroke-current stroke-[1.8]">
+      <path d="M11 4.5H6.75A2.25 2.25 0 0 0 4.5 6.75V11l7.75 8 8-7.75-8-6.75Z" strokeLinejoin="round" />
+      <circle cx="8.1" cy="8.1" r="1.1" />
+    </svg>
+  );
+}
+
+function SettingsIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" className="size-4 fill-none stroke-current stroke-[1.8]">
+      <path d="M12 7.5a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9Z" />
+      <path d="M19 12a7.84 7.84 0 0 0-.12-1.4l1.82-1.41-1.75-3.02-2.2.9a8.34 8.34 0 0 0-2.42-1.4L14 3.25h-4l-.33 2.42a8.34 8.34 0 0 0-2.42 1.4l-2.2-.9L3.3 9.19l1.82 1.41A8.58 8.58 0 0 0 5 12c0 .47.04.94.12 1.4L3.3 14.81l1.75 3.02 2.2-.9c.74.59 1.56 1.06 2.42 1.4L10 20.75h4l.33-2.42c.86-.34 1.68-.81 2.42-1.4l2.2.9 1.75-3.02-1.82-1.41c.08-.46.12-.93.12-1.4Z" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function EditIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 20 20" className="size-3.5 fill-none stroke-current stroke-[1.6]">
+      <path
+        d="M13.75 3.75a1.768 1.768 0 0 1 2.5 2.5l-8.5 8.5-3 .5.5-3 8.5-8.5Z"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function RetryIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 20 20" className="size-3.5 fill-none stroke-current stroke-[1.6]">
+      <path d="M16.25 10a6.25 6.25 0 1 1-1.831-4.419" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M12.75 3.75h3.5v3.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function SendIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 20 20" className="size-5 fill-current">
+      <path d="M5.25 4.5 15 10l-9.75 5.5V4.5Z" />
+    </svg>
   );
 }
 

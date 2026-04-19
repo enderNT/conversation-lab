@@ -98,7 +98,7 @@ export default async function SessionChatPage({
           projectId={projectId}
           sessionId={sessionId}
           projectName={session.project.name}
-          sessionCreatedAt={session.createdAt.toISOString()}
+          sessionTitle={session.title || ""}
           sessionHistory={projectSessions.map((projectSession) => ({
             id: projectSession.id,
             title: projectSession.title || "Chat sin titulo",
