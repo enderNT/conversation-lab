@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { startTransition, useEffect, useRef, useState } from "react";
+import { startTransition, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { createPortal } from "react-dom";
 import {
   clearSessionChat,
   createLlmConfiguration,
@@ -70,6 +71,12 @@ type ConfirmState =
 type EditConflictState = {
   nextMessageId: string;
 } | null;
+
+type FloatingMenuPosition = {
+  top: number;
+  left: number;
+  width: number;
+};
 
 type SessionSelectionProps = {
   projectId: string;
@@ -154,13 +161,14 @@ export function SessionSelection({
   const [activePanel, setActivePanel] = useState<"cases" | "notes" | "tags" | "settings" | null>(null);
   const [contextTab, setContextTab] = useState<"selection" | "cases">("selection");
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
+  const [headerMenuPosition, setHeaderMenuPosition] = useState<FloatingMenuPosition | null>(null);
   const [sessionActionsExpanded, setSessionActionsExpanded] = useState(false);
   const [confirmState, setConfirmState] = useState<ConfirmState>(null);
   const formRef = useRef<HTMLFormElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const editTextareaRef = useRef<HTMLTextAreaElement>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
-  const toolsRef = useRef<HTMLDivElement>(null);
+  const headerMenuAnchorRef = useRef<HTMLDivElement>(null);
 
   const selectionRange =
     anchorIndex === null || focusIndex === null
@@ -297,6 +305,52 @@ export function SessionSelection({
   }, [hasBlockingOverlay]);
 
   useEffect(() => {
+    if (headerMenuOpen) {
+      return;
+    }
+
+    setHeaderMenuPosition(null);
+  }, [headerMenuOpen]);
+
+  useLayoutEffect(() => {
+    if (!headerMenuOpen) {
+      return;
+    }
+
+    const anchorElement = headerMenuAnchorRef.current;
+
+    if (!anchorElement) {
+      return;
+    }
+
+    const updateHeaderMenuPosition = () => {
+      const rect = anchorElement.getBoundingClientRect();
+      const horizontalPadding = 8;
+      const maxWidth = Math.min(352, window.innerWidth - horizontalPadding * 2);
+      const top = Math.min(rect.bottom + 14, window.innerHeight - 16);
+      const left = Math.min(
+        Math.max(horizontalPadding, rect.right - maxWidth),
+        window.innerWidth - maxWidth - horizontalPadding,
+      );
+
+      setHeaderMenuPosition({
+        top,
+        left,
+        width: maxWidth,
+      });
+    };
+
+    updateHeaderMenuPosition();
+    window.addEventListener("resize", updateHeaderMenuPosition);
+    window.addEventListener("scroll", updateHeaderMenuPosition, true);
+
+    return () => {
+      window.removeEventListener("resize", updateHeaderMenuPosition);
+      window.removeEventListener("scroll", updateHeaderMenuPosition, true);
+    };
+  }, [headerMenuOpen]);
+
+  useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") {
         return;
@@ -341,27 +395,6 @@ export function SessionSelection({
       window.removeEventListener("keydown", handleKeyDown);
     };
   }, [activePanel, confirmState, editConflictState, editingMessageId, headerMenuOpen, historyOpen]);
-
-  useEffect(() => {
-    if (!headerMenuOpen) {
-      return;
-    }
-
-    const handlePointerDown = (event: MouseEvent) => {
-      if (toolsRef.current?.contains(event.target as Node)) {
-        return;
-      }
-
-      setHeaderMenuOpen(false);
-      setSessionActionsExpanded(false);
-    };
-
-    document.addEventListener("mousedown", handlePointerDown);
-
-    return () => {
-      document.removeEventListener("mousedown", handlePointerDown);
-    };
-  }, [headerMenuOpen]);
 
   function normalizeDraftBaseUrl(value: string) {
     return value.trim().replace(/\/+$/, "");
@@ -575,49 +608,69 @@ export function SessionSelection({
     setSessionActionsExpanded(false);
   }
 
+  function closeHeaderMenuAndThen(nextAction: () => void) {
+    closeHeaderMenu();
+    window.requestAnimationFrame(() => {
+      nextAction();
+    });
+  }
+
   function openSettingsPanel() {
     setHistoryOpen(false);
-    setActivePanel("settings");
-    closeHeaderMenu();
+    closeHeaderMenuAndThen(() => {
+      setActivePanel("settings");
+    });
   }
 
   function openNotesPanel() {
     setHistoryOpen(false);
-    setActivePanel("notes");
-    closeHeaderMenu();
+    closeHeaderMenuAndThen(() => {
+      setActivePanel("notes");
+    });
   }
 
   function openTagsPanel() {
     setHistoryOpen(false);
-    setActivePanel("tags");
-    closeHeaderMenu();
+    closeHeaderMenuAndThen(() => {
+      setActivePanel("tags");
+    });
+  }
+
+  function openCaseLibrary() {
+    closeHeaderMenuAndThen(() => {
+      startTransition(() => {
+        router.push(caseLibraryHref);
+      });
+    });
   }
 
   function openClearChatConfirmation() {
-    closeHeaderMenu();
-    setConfirmState({
-      action: "clear-chat",
-      title: "Limpiar toda la conversación",
-      description:
-        caseCount > 0
-          ? "Esto eliminará todos los mensajes de esta sesión, pero conservará los dataset examples ya guardados."
-          : "Esto eliminará todos los mensajes de esta sesión.",
-      confirmLabel: "Limpiar chat",
-      tone: "warning",
+    closeHeaderMenuAndThen(() => {
+      setConfirmState({
+        action: "clear-chat",
+        title: "Limpiar toda la conversación",
+        description:
+          caseCount > 0
+            ? "Esto eliminará todos los mensajes de esta sesión, pero conservará los dataset examples ya guardados."
+            : "Esto eliminará todos los mensajes de esta sesión.",
+        confirmLabel: "Limpiar chat",
+        tone: "warning",
+      });
     });
   }
 
   function openDeleteSessionConfirmation() {
-    closeHeaderMenu();
-    setConfirmState({
-      action: "delete-session",
-      title: "Eliminar chat por completo",
-      description:
-        caseCount > 0
-          ? `Esto eliminará la sesión completa junto con ${caseCount} slice(s) asociados. Esta acción no se puede deshacer.`
-          : "Esto eliminará la sesión completa. Esta acción no se puede deshacer.",
-      confirmLabel: "Eliminar chat",
-      tone: "danger",
+    closeHeaderMenuAndThen(() => {
+      setConfirmState({
+        action: "delete-session",
+        title: "Eliminar chat por completo",
+        description:
+          caseCount > 0
+            ? `Esto eliminará la sesión completa junto con ${caseCount} slice(s) asociados. Esta acción no se puede deshacer.`
+            : "Esto eliminará la sesión completa. Esta acción no se puede deshacer.",
+        confirmLabel: "Eliminar chat",
+        tone: "danger",
+      });
     });
   }
 
@@ -1101,7 +1154,7 @@ export function SessionSelection({
             </div>
 
             <div className="flex items-center justify-end gap-2">
-              <div ref={toolsRef} className="relative">
+              <div ref={headerMenuAnchorRef} className="relative">
                 <TopIconButton
                   label="Acciones de chat"
                   title="Acciones de chat"
@@ -1120,95 +1173,6 @@ export function SessionSelection({
                 >
                   <SettingsIcon />
                 </TopIconButton>
-
-                {headerMenuOpen ? (
-                  <div className="theme-drawer absolute right-0 top-[calc(100%+0.85rem)] z-30 w-[min(22rem,calc(100vw-2rem))] rounded-[1.55rem] border border-[var(--line)] bg-[rgba(255,252,246,0.97)] p-2 shadow-[0_22px_58px_rgba(24,35,47,0.16)] backdrop-blur-xl">
-                    <div className="space-y-1">
-                      <MenuRowButton
-                        icon={<SettingsIcon />}
-                        label="Configuración LLM"
-                        description="Modelo y conexión"
-                        onClick={openSettingsPanel}
-                      />
-                      <MenuRowButton
-                        icon={<NotesIcon />}
-                        label="Contexto"
-                        description="Notas del chat"
-                        onClick={openNotesPanel}
-                      />
-                      <MenuRowButton
-                        icon={<TagIcon />}
-                        label="Taxonomía"
-                        description="Etiquetas"
-                        onClick={openTagsPanel}
-                      />
-                    </div>
-
-                    <div className="my-2 h-px bg-[rgba(24,35,47,0.08)]" />
-
-                    <div className="flex items-center justify-between gap-4 rounded-[1.2rem] px-3 py-3">
-                      <div>
-                        <p className="text-sm font-medium text-[var(--foreground)]">Tema</p>
-                        <p className="text-xs text-[var(--muted)]">Ajusta el modo visual</p>
-                      </div>
-                      <ThemeToggle />
-                    </div>
-
-                    <Link
-                      href={caseLibraryHref}
-                      className="flex items-center justify-between gap-4 rounded-[1.2rem] px-3 py-3 text-left transition hover:bg-[rgba(15,95,92,0.07)]"
-                      onClick={() => closeHeaderMenu()}
-                    >
-                      <div>
-                        <p className="text-sm font-medium text-[var(--foreground)]">Dataset examples</p>
-                        <p className="text-xs text-[var(--muted)]">Abrir biblioteca</p>
-                      </div>
-                      <span className="text-sm font-medium text-[var(--muted-strong)]">Abrir</span>
-                    </Link>
-
-                    <div className="my-2 h-px bg-[rgba(24,35,47,0.08)]" />
-
-                    <button
-                      type="button"
-                      className="flex w-full items-center justify-between gap-4 rounded-[1.2rem] px-3 py-3 text-left transition hover:bg-[rgba(15,95,92,0.07)]"
-                      onClick={() => setSessionActionsExpanded((currentValue) => !currentValue)}
-                    >
-                      <div>
-                        <p className="text-sm font-medium text-[var(--foreground)]">Acciones de la sesión</p>
-                        <p className="text-xs text-[var(--muted)]">Expandir opciones destructivas</p>
-                      </div>
-                      <DisclosureCaretIcon expanded={sessionActionsExpanded} />
-                    </button>
-
-                    {sessionActionsExpanded ? (
-                      <div className="mt-2 space-y-2 rounded-[1.2rem] border border-[rgba(24,35,47,0.08)] bg-[rgba(248,245,238,0.9)] p-2">
-                        <button
-                          type="button"
-                          className="flex w-full items-center justify-between gap-4 rounded-[1rem] px-3 py-3 text-left transition hover:bg-white/80 disabled:cursor-not-allowed disabled:opacity-50"
-                          onClick={openClearChatConfirmation}
-                          disabled={isClearingChat || isDeletingSession || messages.length === 0}
-                        >
-                          <div>
-                            <p className="text-sm font-medium text-[var(--foreground)]">Limpiar chat</p>
-                            <p className="text-xs text-[var(--muted)]">Mantiene la sesión</p>
-                          </div>
-                        </button>
-
-                        <button
-                          type="button"
-                          className="flex w-full items-center justify-between gap-4 rounded-[1rem] bg-rose-600 px-3 py-3 text-left text-white transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-50"
-                          onClick={openDeleteSessionConfirmation}
-                          disabled={isDeletingSession || isClearingChat}
-                        >
-                          <div>
-                            <p className="text-sm font-medium">Eliminar chat</p>
-                            <p className="text-xs text-rose-100">Permanente</p>
-                          </div>
-                        </button>
-                      </div>
-                    ) : null}
-                  </div>
-                ) : null}
               </div>
             </div>
           </div>
@@ -2283,6 +2247,22 @@ export function SessionSelection({
           void handleSaveEditedMessage(nextMessageId);
         }}
       />
+
+      <HeaderActionMenu
+        open={headerMenuOpen}
+        position={headerMenuPosition}
+        sessionActionsExpanded={sessionActionsExpanded}
+        onClose={closeHeaderMenu}
+        onOpenSettings={openSettingsPanel}
+        onOpenNotes={openNotesPanel}
+        onOpenTags={openTagsPanel}
+        onOpenCaseLibrary={openCaseLibrary}
+        onToggleSessionActions={() => setSessionActionsExpanded((currentValue) => !currentValue)}
+        onOpenClearChatConfirmation={openClearChatConfirmation}
+        onOpenDeleteSessionConfirmation={openDeleteSessionConfirmation}
+        disableClearChat={isClearingChat || isDeletingSession || messages.length === 0}
+        disableDeleteSession={isDeletingSession || isClearingChat}
+      />
     </>
   );
 }
@@ -2354,6 +2334,145 @@ function MenuRowButton({
         <span className="mt-1 block text-xs text-[var(--muted)]">{description}</span>
       </span>
     </button>
+  );
+}
+
+function HeaderActionMenu({
+  open,
+  position,
+  sessionActionsExpanded,
+  onClose,
+  onOpenSettings,
+  onOpenNotes,
+  onOpenTags,
+  onOpenCaseLibrary,
+  onToggleSessionActions,
+  onOpenClearChatConfirmation,
+  onOpenDeleteSessionConfirmation,
+  disableClearChat,
+  disableDeleteSession,
+}: {
+  open: boolean;
+  position: FloatingMenuPosition | null;
+  sessionActionsExpanded: boolean;
+  onClose: () => void;
+  onOpenSettings: () => void;
+  onOpenNotes: () => void;
+  onOpenTags: () => void;
+  onOpenCaseLibrary: () => void;
+  onToggleSessionActions: () => void;
+  onOpenClearChatConfirmation: () => void;
+  onOpenDeleteSessionConfirmation: () => void;
+  disableClearChat: boolean;
+  disableDeleteSession: boolean;
+}) {
+  if (!open || !position) {
+    return null;
+  }
+
+  return createPortal(
+    <>
+      <button
+        type="button"
+        aria-label="Cerrar acciones de chat"
+        className="fixed inset-0 z-40 cursor-default"
+        onClick={onClose}
+      />
+      <div
+        className="theme-drawer fixed z-50 rounded-[1.55rem] border border-[var(--line)] bg-[rgba(255,252,246,0.97)] p-2 shadow-[0_22px_58px_rgba(24,35,47,0.16)] backdrop-blur-xl"
+        style={{
+          top: `${position.top}px`,
+          left: `${position.left}px`,
+          width: `${position.width}px`,
+        }}
+      >
+        <div className="space-y-1">
+          <MenuRowButton
+            icon={<SettingsIcon />}
+            label="Configuración LLM"
+            description="Modelo y conexión"
+            onClick={onOpenSettings}
+          />
+          <MenuRowButton
+            icon={<NotesIcon />}
+            label="Contexto"
+            description="Notas del chat"
+            onClick={onOpenNotes}
+          />
+          <MenuRowButton
+            icon={<TagIcon />}
+            label="Taxonomía"
+            description="Etiquetas"
+            onClick={onOpenTags}
+          />
+        </div>
+
+        <div className="my-2 h-px bg-[rgba(24,35,47,0.08)]" />
+
+        <div className="flex items-center justify-between gap-4 rounded-[1.2rem] px-3 py-3">
+          <div>
+            <p className="text-sm font-medium text-[var(--foreground)]">Tema</p>
+            <p className="text-xs text-[var(--muted)]">Ajusta el modo visual</p>
+          </div>
+          <ThemeToggle />
+        </div>
+
+        <button
+          type="button"
+          className="flex w-full items-center justify-between gap-4 rounded-[1.2rem] px-3 py-3 text-left transition hover:bg-[rgba(15,95,92,0.07)]"
+          onClick={onOpenCaseLibrary}
+        >
+          <div>
+            <p className="text-sm font-medium text-[var(--foreground)]">Dataset examples</p>
+            <p className="text-xs text-[var(--muted)]">Abrir biblioteca</p>
+          </div>
+          <span className="text-sm font-medium text-[var(--muted-strong)]">Abrir</span>
+        </button>
+
+        <div className="my-2 h-px bg-[rgba(24,35,47,0.08)]" />
+
+        <button
+          type="button"
+          className="flex w-full items-center justify-between gap-4 rounded-[1.2rem] px-3 py-3 text-left transition hover:bg-[rgba(15,95,92,0.07)]"
+          onClick={onToggleSessionActions}
+        >
+          <div>
+            <p className="text-sm font-medium text-[var(--foreground)]">Acciones de la sesión</p>
+            <p className="text-xs text-[var(--muted)]">Expandir opciones destructivas</p>
+          </div>
+          <DisclosureCaretIcon expanded={sessionActionsExpanded} />
+        </button>
+
+        {sessionActionsExpanded ? (
+          <div className="mt-2 space-y-2 rounded-[1.2rem] border border-[rgba(24,35,47,0.08)] bg-[rgba(248,245,238,0.9)] p-2">
+            <button
+              type="button"
+              className="flex w-full items-center justify-between gap-4 rounded-[1rem] px-3 py-3 text-left transition hover:bg-white/80 disabled:cursor-not-allowed disabled:opacity-50"
+              onClick={onOpenClearChatConfirmation}
+              disabled={disableClearChat}
+            >
+              <div>
+                <p className="text-sm font-medium text-[var(--foreground)]">Limpiar chat</p>
+                <p className="text-xs text-[var(--muted)]">Mantiene la sesión</p>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              className="flex w-full items-center justify-between gap-4 rounded-[1rem] bg-rose-600 px-3 py-3 text-left text-white transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-50"
+              onClick={onOpenDeleteSessionConfirmation}
+              disabled={disableDeleteSession}
+            >
+              <div>
+                <p className="text-sm font-medium">Eliminar chat</p>
+                <p className="text-xs text-rose-100">Permanente</p>
+              </div>
+            </button>
+          </div>
+        ) : null}
+      </div>
+    </>,
+    document.body,
   );
 }
 
