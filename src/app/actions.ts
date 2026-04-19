@@ -961,6 +961,143 @@ export async function updateSessionMessage(
   };
 }
 
+export async function retryLastAssistantMessage(projectId: string, sessionId: string) {
+  const session = await prisma.session.findUnique({
+    where: { id: sessionId },
+    select: {
+      id: true,
+      projectId: true,
+      systemPrompt: true,
+      chatModel: true,
+      chatBaseUrl: true,
+      chatApiKey: true,
+      chatConnectionVerifiedAt: true,
+      messages: {
+        orderBy: { orderIndex: "asc" },
+        select: {
+          id: true,
+          role: true,
+          text: true,
+          orderIndex: true,
+        },
+      },
+    },
+  });
+
+  if (!session || session.projectId !== projectId) {
+    return {
+      ok: false as const,
+      error: "La sesión no existe o no pertenece al proyecto indicado.",
+    };
+  }
+
+  if (!session.chatModel?.trim()) {
+    return {
+      ok: false as const,
+      error: "Define un modelo y prueba la conexión antes de usar el chat.",
+    };
+  }
+
+  if (!session.chatConnectionVerifiedAt) {
+    return {
+      ok: false as const,
+      error: "La conexión del chat todavía no fue verificada para este modelo.",
+    };
+  }
+
+  const lastMessage = session.messages.at(-1);
+  const conversationBeforeRetry = lastMessage ? session.messages.slice(0, -1) : [];
+  const previousMessage = conversationBeforeRetry.at(-1);
+
+  if (!lastMessage || lastMessage.role !== MessageRole.assistant) {
+    return {
+      ok: false as const,
+      error: "Solo se puede reintentar cuando el último turno es del asistente.",
+    };
+  }
+
+  if (!previousMessage || previousMessage.role !== MessageRole.user) {
+    return {
+      ok: false as const,
+      error: "El reintento necesita que el último mensaje previo sea del usuario.",
+    };
+  }
+
+  try {
+    const assistantReply = await generateAssistantReply({
+      model: session.chatModel,
+      baseUrl: session.chatBaseUrl,
+      apiKey: session.chatApiKey,
+      systemPrompt: session.systemPrompt,
+      messages: conversationBeforeRetry.map((message) => ({
+        role: message.role,
+        text: message.text,
+      })),
+    });
+
+    const retriedMessage = await prisma.$transaction(async (tx) => {
+      const latestMessage = await tx.message.findFirst({
+        where: { sessionId },
+        orderBy: { orderIndex: "desc" },
+        select: {
+          id: true,
+          role: true,
+          orderIndex: true,
+        },
+      });
+
+      if (
+        !latestMessage ||
+        latestMessage.id !== lastMessage.id ||
+        latestMessage.role !== MessageRole.assistant
+      ) {
+        throw new Error("El chat cambió antes de completar el reintento. Inténtalo de nuevo.");
+      }
+
+      await tx.message.delete({
+        where: { id: lastMessage.id },
+      });
+
+      return tx.message.create({
+        data: {
+          sessionId,
+          role: MessageRole.assistant,
+          text: assistantReply.text,
+          orderIndex: lastMessage.orderIndex,
+          metadataJson: {
+            source: "openai_compatible",
+            model: assistantReply.model,
+            response_id: assistantReply.responseId,
+            retried_from_message_id: lastMessage.id,
+          },
+        },
+      });
+    });
+
+    revalidatePath(`/projects/${projectId}/sessions/${sessionId}`);
+
+    return {
+      ok: true as const,
+      message: {
+        id: retriedMessage.id,
+        role: retriedMessage.role,
+        text: retriedMessage.text,
+        orderIndex: retriedMessage.orderIndex,
+        createdAt: retriedMessage.createdAt.toISOString(),
+        isEdited: false,
+      },
+    };
+  } catch (error) {
+    return {
+      ok: false as const,
+      error:
+        error instanceof Error
+          ? error.message
+          : "No fue posible regenerar la última respuesta del asistente.",
+    };
+  }
+}
+
 export async function clearSessionChat(projectId: string, sessionId: string) {
   const session = await prisma.session.findUnique({
     where: { id: sessionId },

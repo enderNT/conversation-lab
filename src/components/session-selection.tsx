@@ -7,6 +7,7 @@ import {
   clearSessionChat,
   createLlmConfiguration,
   deleteSession,
+  retryLastAssistantMessage,
   sendSessionMessage,
   updateSessionMessage,
   updateSessionChatModel,
@@ -131,6 +132,7 @@ export function SessionSelection({
   const [editDraft, setEditDraft] = useState("");
   const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [editConflictState, setEditConflictState] = useState<EditConflictState>(null);
+  const [retryingMessageId, setRetryingMessageId] = useState<string | null>(null);
   const [selectedLlmConfigurationId, setSelectedLlmConfigurationId] = useState("");
   const [newLlmConfigurationName, setNewLlmConfigurationName] = useState("");
   const [chatModelDraft, setChatModelDraft] = useState(chatModel);
@@ -182,24 +184,33 @@ export function SessionSelection({
     ? `/projects/${projectId}/sessions/${sessionId}/cases/new?start=${selectionRange.start}&end=${selectionRange.end}`
     : "#";
   const caseLibraryHref = `/cases?projectId=${projectId}`;
+  const visibleMessages =
+    retryingMessageId === null
+      ? localMessages
+      : localMessages.filter((message) => message.id !== retryingMessageId);
   const displayedMessages = pendingUserMessage
     ? [
-        ...localMessages,
+        ...visibleMessages,
         {
           id: "__pending-user-message__",
           role: "user" as const,
           text: pendingUserMessage,
           orderIndex:
-            localMessages.length > 0 ? localMessages[localMessages.length - 1]!.orderIndex + 1 : 0,
+            visibleMessages.length > 0 ? visibleMessages[visibleMessages.length - 1]!.orderIndex + 1 : 0,
           createdAt: new Date().toISOString(),
           isEdited: false,
         },
       ]
-    : localMessages;
+    : visibleMessages;
   const editingMessage =
     editingMessageId === null
       ? null
       : localMessages.find((message) => message.id === editingMessageId) ?? null;
+  const lastConversationMessage = pendingUserMessage ? null : localMessages.at(-1) ?? null;
+  const canRetryLastAssistantMessage =
+    lastConversationMessage !== null &&
+    lastConversationMessage.role === "assistant" &&
+    retryingMessageId === null;
   const normalizedEditDraft = editDraft.trim();
   const editIsDirty = editingMessage !== null && normalizedEditDraft !== editingMessage.text;
   const editCanSave =
@@ -372,7 +383,7 @@ export function SessionSelection({
     chatModelIsConfigured &&
     chatConnectionIsVerified &&
     !chatSettingsAreDirty;
-  const chatComposerBlocked = editingMessageId !== null || isSavingEdit;
+  const chatComposerBlocked = editingMessageId !== null || isSavingEdit || retryingMessageId !== null;
 
   const chatAvailabilityMessage = !chatRuntimeEnabled
     ? chatRuntimeDisabledReason || "La configuración del proveedor no es válida."
@@ -495,6 +506,62 @@ export function SessionSelection({
       });
     } finally {
       setIsSavingEdit(false);
+    }
+  }
+
+  async function handleRetryLastAssistantMessage() {
+    if (!canRetryLastAssistantMessage || isSending || isSavingEdit) {
+      return;
+    }
+
+    const messageToRetry = lastConversationMessage;
+
+    if (!messageToRetry) {
+      return;
+    }
+
+    setRetryingMessageId(messageToRetry.id);
+    setErrorMessage(null);
+
+    try {
+      const result = await retryLastAssistantMessage(projectId, sessionId);
+
+      if (!result.ok) {
+        setRetryingMessageId(null);
+        setErrorMessage(result.error);
+        pushToast({
+          title: "No fue posible reintentar la respuesta",
+          description: result.error,
+          variant: "error",
+          durationMs: 7000,
+        });
+        return;
+      }
+
+      setLocalMessages((currentMessages) => [
+        ...currentMessages.filter((message) => message.id !== messageToRetry.id),
+        result.message,
+      ]);
+      setRetryingMessageId(null);
+      pushToast({
+        title: "Respuesta regenerada",
+        description: "Se reemplazó el último turno del asistente.",
+        variant: "success",
+        durationMs: 4000,
+      });
+
+      startTransition(() => {
+        router.refresh();
+      });
+    } catch {
+      setRetryingMessageId(null);
+      setErrorMessage("No fue posible regenerar la última respuesta del asistente.");
+      pushToast({
+        title: "No fue posible reintentar la respuesta",
+        description: "No fue posible regenerar la última respuesta del asistente.",
+        variant: "error",
+        durationMs: 7000,
+      });
     }
   }
 
@@ -1199,7 +1266,15 @@ export function SessionSelection({
                 message.orderIndex <= selectionRange.end;
               const isEditing = editingMessageId === message.id;
               const editButtonDisabled =
-                isSending || isSavingEdit || message.id === "__pending-user-message__";
+                isSending ||
+                isSavingEdit ||
+                retryingMessageId !== null ||
+                message.id === "__pending-user-message__";
+              const showRetryButton =
+                message.id !== "__pending-user-message__" &&
+                !isEditing &&
+                canRetryLastAssistantMessage &&
+                lastConversationMessage?.id === message.id;
 
               return (
                 <div
@@ -1370,12 +1445,45 @@ export function SessionSelection({
                         <span>Editar</span>
                       </button>
                     ) : null}
+
+                    {showRetryButton ? (
+                      <div className="mt-2 flex justify-start px-1">
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-2 rounded-full border border-[var(--line)] bg-white/88 px-3 py-1.5 text-xs font-semibold text-[var(--muted-strong)] shadow-sm transition hover:border-[var(--accent)] hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-50"
+                          onClick={() => {
+                            void handleRetryLastAssistantMessage();
+                          }}
+                          disabled={isSending || isSavingEdit || retryingMessageId !== null}
+                          aria-label={`Reintentar turno ${message.orderIndex + 1}`}
+                          title="Eliminar este último mensaje del asistente y generar uno nuevo"
+                        >
+                          <svg aria-hidden="true" viewBox="0 0 20 20" fill="none" className="h-3.5 w-3.5">
+                            <path
+                              d="M16.25 10a6.25 6.25 0 1 1-1.831-4.419"
+                              stroke="currentColor"
+                              strokeWidth="1.6"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            />
+                            <path
+                              d="M12.75 3.75h3.5v3.5"
+                              stroke="currentColor"
+                              strokeWidth="1.6"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            />
+                          </svg>
+                          <span>{retryingMessageId === message.id ? "Reintentando..." : "Reintentar"}</span>
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
                 </div>
               );
             })}
 
-            {isSending ? (
+            {isSending || retryingMessageId !== null ? (
               <div className="flex w-full justify-start">
                 <div className="relative w-full max-w-3xl rounded-[1.75rem] border border-[var(--line)] bg-[var(--assistant-bubble)] px-4 py-4 shadow-[0_12px_32px_rgba(15,23,42,0.06)] sm:px-5">
                   <div className="mb-3 flex flex-wrap items-center justify-between gap-3 text-xs uppercase tracking-[0.18em] text-[var(--muted)]">
@@ -1383,7 +1491,7 @@ export function SessionSelection({
                       <span className="rounded-full bg-[rgba(15,95,92,0.12)] px-2.5 py-1 text-[10px] font-semibold text-[var(--accent-strong)]">
                         Asistente
                       </span>
-                      <span>Escribiendo</span>
+                      <span>{retryingMessageId !== null ? "Reintentando" : "Escribiendo"}</span>
                     </div>
                   </div>
 
