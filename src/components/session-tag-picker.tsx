@@ -37,6 +37,7 @@ export function SessionTagPicker({
   const [newTagName, setNewTagName] = useState("");
   const [busyTagId, setBusyTagId] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
+  const [showCompactComposer, setShowCompactComposer] = useState(false);
   const assignableTags = availableTags.filter(
     (tag) => !assignedTags.some((assignedTag) => assignedTag.id === tag.id),
   );
@@ -62,6 +63,7 @@ export function SessionTagPicker({
       }
 
       setSelectedTagId("");
+      setShowCompactComposer(false);
       pushToast({
         title: "Etiqueta asignada",
         description: "La sesión ya usa esta etiqueta.",
@@ -149,6 +151,7 @@ export function SessionTagPicker({
       }
 
       setNewTagName("");
+      setShowCompactComposer(false);
       pushToast({
         title: "Etiqueta creada",
         description: `La etiqueta "${trimmedName}" quedó asignada a la sesión.`,
@@ -170,17 +173,120 @@ export function SessionTagPicker({
     }
   }
 
+  if (compact) {
+    return (
+      <div className="space-y-3 text-sm">
+        <div className="flex flex-wrap gap-2">
+          {assignedTags.map((tag) => (
+            <span
+              key={tag.id}
+              className="inline-flex items-center gap-2 rounded-full border border-[color:rgba(15,95,92,0.08)] bg-[color:rgba(207,233,229,0.9)] px-3 py-1 text-[var(--foreground)]"
+            >
+              <span>{tag.name}</span>
+              <button
+                type="button"
+                className="text-[var(--muted)] transition hover:text-rose-600"
+                onClick={() => {
+                  void handleRemoveTag(tag.id);
+                }}
+                disabled={busyTagId === tag.id}
+                aria-label={`Quitar etiqueta ${tag.name}`}
+                title={`Quitar etiqueta ${tag.name}`}
+              >
+                ×
+              </button>
+            </span>
+          ))}
+
+          {assignedTags.length === 0 ? (
+            <span className="rounded-full border border-[var(--line)] bg-white/72 px-3 py-1 text-[var(--muted)]">
+              Sin etiquetas
+            </span>
+          ) : null}
+
+          <button
+            type="button"
+            className="inline-flex items-center rounded-full border border-transparent bg-[var(--background)] px-3 py-1 text-[var(--muted-strong)] transition hover:border-[var(--line)] hover:text-[var(--foreground)]"
+            onClick={() => setShowCompactComposer((current) => !current)}
+            aria-expanded={showCompactComposer}
+          >
+            + Tag
+          </button>
+        </div>
+
+        {showCompactComposer ? (
+          <div className="space-y-2 rounded-[1.35rem] border border-[var(--line)] bg-white/75 p-3 shadow-[0_10px_24px_rgba(24,35,47,0.05)]">
+            <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+              <select
+                className="field min-h-11 rounded-full border-transparent bg-white px-4 text-sm shadow-[inset_0_1px_0_rgba(255,255,255,0.58)]"
+                value={selectedTagId}
+                onChange={(event) => setSelectedTagId(event.target.value)}
+                disabled={assignableTags.length === 0 || busyTagId !== null}
+              >
+                <option value="">Asignar etiqueta existente</option>
+                {assignableTags.map((tag) => (
+                  <option key={tag.id} value={tag.id}>
+                    {tag.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="button-secondary min-h-11 rounded-full px-4"
+                onClick={() => {
+                  void handleAssignTag();
+                }}
+                disabled={!selectedTagId || busyTagId !== null}
+              >
+                Añadir
+              </button>
+            </div>
+
+            <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+              <input
+                className="field min-h-11 rounded-full border-transparent bg-white px-4 text-sm shadow-[inset_0_1px_0_rgba(255,255,255,0.58)]"
+                value={newTagName}
+                onChange={(event) => setNewTagName(event.target.value)}
+                placeholder="Crear etiqueta rápida"
+                disabled={isCreating}
+              />
+              <button
+                type="button"
+                className="button-secondary min-h-11 rounded-full px-4"
+                onClick={() => {
+                  void handleCreateAndAssign();
+                }}
+                disabled={newTagName.trim().length === 0 || isCreating}
+              >
+                {isCreating ? "Creando..." : "Crear"}
+              </button>
+            </div>
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
   return (
-    <div className={cn("space-y-3", compact ? "text-xs" : "text-sm")}>
+    <div className="space-y-3 text-sm">
       <div className="flex flex-wrap gap-2">
         {assignedTags.length === 0 ? (
-          <span className="text-[var(--muted)]">Sin etiquetas</span>
+          <span
+            className={cn(compact ? "rounded-full border border-[var(--line)] bg-white/72 px-3 py-1 text-[var(--muted)]" : "text-[var(--muted)]")}
+          >
+            Sin etiquetas
+          </span>
         ) : null}
 
         {assignedTags.map((tag) => (
           <span
             key={tag.id}
-            className="inline-flex items-center gap-2 rounded-full border border-[var(--line)] bg-white/80 px-3 py-1 text-[var(--foreground)]"
+            className={cn(
+              "inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[var(--foreground)]",
+              compact
+                ? "border-[color:rgba(15,95,92,0.08)] bg-[color:rgba(207,233,229,0.9)]"
+                : "border-[var(--line)] bg-white/80",
+            )}
           >
             <span>{tag.name}</span>
             <button
@@ -199,9 +305,13 @@ export function SessionTagPicker({
         ))}
       </div>
 
-      <div className={cn("grid gap-2", compact ? "md:grid-cols-1" : "md:grid-cols-[minmax(0,1fr)_auto]")}>
+      <div className={cn("grid gap-2", compact ? "sm:grid-cols-[minmax(0,1fr)_auto]" : "md:grid-cols-[minmax(0,1fr)_auto]")}>
         <select
-          className="field"
+          className={cn(
+            "field",
+            compact &&
+              "min-h-11 rounded-full border-transparent bg-white px-4 text-sm shadow-[inset_0_1px_0_rgba(255,255,255,0.58)]",
+          )}
           value={selectedTagId}
           onChange={(event) => setSelectedTagId(event.target.value)}
           disabled={assignableTags.length === 0 || busyTagId !== null}
@@ -215,7 +325,7 @@ export function SessionTagPicker({
         </select>
         <button
           type="button"
-          className="button-secondary"
+          className={cn("button-secondary", compact && "min-h-11 rounded-full px-4")}
           onClick={() => {
             void handleAssignTag();
           }}
@@ -225,9 +335,13 @@ export function SessionTagPicker({
         </button>
       </div>
 
-      <div className={cn("grid gap-2", compact ? "md:grid-cols-1" : "md:grid-cols-[minmax(0,1fr)_auto]")}>
+      <div className={cn("grid gap-2", compact ? "sm:grid-cols-[minmax(0,1fr)_auto]" : "md:grid-cols-[minmax(0,1fr)_auto]")}>
         <input
-          className="field"
+          className={cn(
+            "field",
+            compact &&
+              "min-h-11 rounded-full border-transparent bg-white px-4 text-sm shadow-[inset_0_1px_0_rgba(255,255,255,0.58)]",
+          )}
           value={newTagName}
           onChange={(event) => setNewTagName(event.target.value)}
           placeholder="Crear etiqueta rápida"
@@ -235,7 +349,7 @@ export function SessionTagPicker({
         />
         <button
           type="button"
-          className="button-secondary"
+          className={cn("button-secondary", compact && "min-h-11 rounded-full px-4")}
           onClick={() => {
             void handleCreateAndAssign();
           }}
