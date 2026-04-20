@@ -112,6 +112,21 @@ model LlmConfiguration {
   @@index([createdAt])
 }
 
+model RagConfiguration {
+  id            String   @id @default(cuid())
+  name          String
+  qdrantBaseUrl String
+  qdrantApiKey  String?
+  collectionName String
+  vectorName    String?
+  queryModel    String?
+  payloadPath   String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([createdAt])
+}
+
 model SessionTag {
   id          String             @id @default(cuid())
   name        String             @unique
@@ -359,6 +374,10 @@ model DatasetFieldMapping {
   llmPromptText      String?
   llmGeneratedValueJson Json?
   llmGenerationMetaJson Json?
+  ragConfigurationId String?
+  ragPromptText      String?
+  ragGeneratedValueJson Json?
+  ragGenerationMetaJson Json?
   resolvedPreviewJson Json?
   position           Int              @default(0)
   createdAt          DateTime         @default(now())

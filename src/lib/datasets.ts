@@ -204,6 +204,8 @@ function resolveSourceValue(
       return sourceMetadata.session_notes ?? "";
     case "llm_generated":
       return parseValueText(mapping.llmGeneratedValueText);
+    case "rag_generated":
+      return parseValueText(mapping.ragGeneratedValueText);
     case "constant":
       return parseValueText(mapping.constantValueText);
     case "manual":
@@ -664,7 +666,8 @@ function inferDefaultTransforms(field: DatasetSchemaField, sourceKey: DatasetFie
     field.type === "string" &&
     sourceKey !== "manual" &&
     sourceKey !== "constant" &&
-    sourceKey !== "llm_generated"
+    sourceKey !== "llm_generated" &&
+    sourceKey !== "rag_generated"
   ) {
     return ["trim"];
   }
@@ -687,6 +690,9 @@ export function buildDefaultMappings(schema: DatasetSchemaField[], side: "input"
       llmConfigurationId: "",
       llmPromptText: "",
       llmGeneratedValueText: "",
+      ragConfigurationId: "",
+      ragPromptText: "",
+      ragGeneratedValueText: "",
     };
   });
 }
@@ -706,6 +712,10 @@ export function hydrateMappingsFromStored(input: {
     llmPromptText?: string | null;
     llmGeneratedValueJson?: JsonValue | null;
     llmGenerationMetaJson?: JsonValue | null;
+    ragConfigurationId?: string | null;
+    ragPromptText?: string | null;
+    ragGeneratedValueJson?: JsonValue | null;
+    ragGenerationMetaJson?: JsonValue | null;
     resolvedPreviewJson: JsonValue | null;
   }>;
 }) {
@@ -745,6 +755,10 @@ export function hydrateMappingsFromStored(input: {
       llmPromptText: stored.llmPromptText ?? "",
       llmGeneratedValueText: stringifyJsonValue(stored.llmGeneratedValueJson as JsonValue | undefined),
       llmGenerationMeta: (stored.llmGenerationMetaJson as JsonValue | undefined) ?? undefined,
+      ragConfigurationId: stored.ragConfigurationId ?? "",
+      ragPromptText: stored.ragPromptText ?? "",
+      ragGeneratedValueText: stringifyJsonValue(stored.ragGeneratedValueJson as JsonValue | undefined),
+      ragGenerationMeta: (stored.ragGenerationMetaJson as JsonValue | undefined) ?? undefined,
       resolvedPreview: (stored.resolvedPreviewJson as JsonValue | undefined) ?? undefined,
     };
   });

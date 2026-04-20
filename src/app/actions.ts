@@ -43,6 +43,7 @@ import {
   normalizeChatBaseUrl,
   testChatConnection as testOpenAIChatConnection,
 } from "@/lib/openai";
+import { normalizeQdrantBaseUrl, queryQdrantTopPoint } from "@/lib/qdrant";
 import type { ActionFormState } from "@/lib/form-state";
 import { prisma } from "@/lib/prisma";
 import {
@@ -98,6 +99,16 @@ const llmConfigurationSchema = z.object({
   chatBaseUrl: z.string().default(""),
   chatApiKey: z.string().default(""),
   systemPrompt: z.string().default(""),
+});
+
+const ragConfigurationSchema = z.object({
+  name: z.string().trim().min(1, "Asigna un nombre para identificar la configuración."),
+  qdrantBaseUrl: z.string().trim().min(1, "Define la URL base de Qdrant."),
+  qdrantApiKey: z.string().default(""),
+  collectionName: z.string().trim().min(1, "Define la colección a consultar."),
+  vectorName: z.string().default(""),
+  queryModel: z.string().default(""),
+  payloadPath: z.string().default(""),
 });
 
 const sessionTagSchema = z.object({
@@ -190,6 +201,10 @@ const datasetFieldMappingSchema = z.object({
   llmPromptText: z.string().default(""),
   llmGeneratedValueText: z.string().default(""),
   llmGenerationMeta: z.any().optional(),
+  ragConfigurationId: z.string().default(""),
+  ragPromptText: z.string().default(""),
+  ragGeneratedValueText: z.string().default(""),
+  ragGenerationMeta: z.any().optional(),
 });
 
 const datasetExampleSchema = z.object({
@@ -206,6 +221,23 @@ const datasetExampleSchema = z.object({
 
 const datasetFieldGenerationSchema = z.object({
   llmConfigurationId: z.string().trim().min(1, "Selecciona una configuración LLM global."),
+  side: z.enum(DATASET_FIELD_SIDES),
+  field: datasetSchemaFieldSchema,
+  datasetSpecName: z.string().trim().default(""),
+  datasetSpecSlug: z.string().trim().default(""),
+  datasetSpecDescription: z.string().trim().default(""),
+  promptText: z.string().trim().min(1, "Escribe una instrucción para el campo."),
+  lastUserMessage: z.string().default(""),
+  sourceSummary: z.string().default(""),
+  sessionNotes: z.string().default(""),
+  conversationSliceJson: z.string().trim().default("[]"),
+  surroundingContextJson: z.string().trim().default("[]"),
+  inputPayloadJson: z.string().trim().default("{}"),
+  outputPayloadJson: z.string().trim().default("{}"),
+});
+
+const datasetFieldRagGenerationSchema = z.object({
+  ragConfigurationId: z.string().trim().min(1, "Selecciona una configuración RAG global."),
   side: z.enum(DATASET_FIELD_SIDES),
   field: datasetSchemaFieldSchema,
   datasetSpecName: z.string().trim().default(""),
@@ -337,6 +369,45 @@ function buildDatasetFieldGenerationPrompt(input: {
     'Usa exactamente esta forma: {"value": ..., "confidence": 0.0, "notes": "..."}.',
     "El contenido de value debe respetar el tipo esperado del campo.",
     "Si el valor debe salir de la conversacion o del contexto, sintetizalo de forma util para entrenamiento, no copies ruido innecesario.",
+    `Instruccion del operador: ${input.promptText}`,
+    `Ultimo mensaje del usuario: ${input.lastUserMessage || ""}`,
+    `Resumen curatorial: ${input.sourceSummary || ""}`,
+    `Notas de sesion: ${input.sessionNotes || ""}`,
+    "Transcript seleccionado:",
+    input.conversationSliceJson,
+    "Contexto cercano:",
+    input.surroundingContextJson,
+    "Payload input actual:",
+    input.inputPayloadJson,
+    "Payload output actual:",
+    input.outputPayloadJson,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function buildDatasetFieldRagQuery(input: {
+  side: "input" | "output";
+  field: DatasetSchemaField;
+  datasetSpecName: string;
+  datasetSpecSlug: string;
+  datasetSpecDescription: string;
+  promptText: string;
+  lastUserMessage: string;
+  sourceSummary: string;
+  sessionNotes: string;
+  conversationSliceJson: string;
+  surroundingContextJson: string;
+  inputPayloadJson: string;
+  outputPayloadJson: string;
+}) {
+  return [
+    `Campo destino: ${input.field.key}`,
+    `Lado: ${input.side}`,
+    `Tipo esperado: ${input.field.type}`,
+    input.field.description ? `Descripcion del campo: ${input.field.description}` : "",
+    `Spec: ${input.datasetSpecName || input.datasetSpecSlug || "dataset_spec"}`,
+    input.datasetSpecDescription ? `Descripcion del spec: ${input.datasetSpecDescription}` : "",
     `Instruccion del operador: ${input.promptText}`,
     `Ultimo mensaje del usuario: ${input.lastUserMessage || ""}`,
     `Resumen curatorial: ${input.sourceSummary || ""}`,
@@ -506,6 +577,18 @@ function normalizeLlmConfigurationInput(input: z.infer<typeof llmConfigurationSc
     chatBaseUrl: normalizeChatBaseUrl(input.chatBaseUrl),
     chatApiKey: input.chatApiKey.trim() || null,
     systemPrompt: input.systemPrompt.trim() || null,
+  };
+}
+
+function normalizeRagConfigurationInput(input: z.infer<typeof ragConfigurationSchema>) {
+  return {
+    name: input.name.trim(),
+    qdrantBaseUrl: normalizeQdrantBaseUrl(input.qdrantBaseUrl),
+    qdrantApiKey: input.qdrantApiKey.trim() || null,
+    collectionName: input.collectionName.trim(),
+    vectorName: input.vectorName.trim() || null,
+    queryModel: input.queryModel.trim() || null,
+    payloadPath: input.payloadPath.trim() || null,
   };
 }
 
@@ -739,6 +822,103 @@ export async function createLlmConfiguration(input: {
   return {
     ok: true as const,
   };
+}
+
+export async function createRagConfigurationWithFeedback(
+  _previousState: ActionFormState,
+  formData: FormData,
+) {
+  const parsed = ragConfigurationSchema.safeParse({
+    name: asOptionalString(formData.get("name")),
+    qdrantBaseUrl: asOptionalString(formData.get("qdrantBaseUrl")),
+    qdrantApiKey: asOptionalString(formData.get("qdrantApiKey")),
+    collectionName: asOptionalString(formData.get("collectionName")),
+    vectorName: asOptionalString(formData.get("vectorName")),
+    queryModel: asOptionalString(formData.get("queryModel")),
+    payloadPath: asOptionalString(formData.get("payloadPath")),
+  });
+
+  if (!parsed.success) {
+    return buildActionErrorState(
+      getActionErrorMessage(parsed.error, "No fue posible guardar la configuración RAG."),
+    );
+  }
+
+  try {
+    const normalized = normalizeRagConfigurationInput(parsed.data);
+
+    await prisma.ragConfiguration.create({
+      data: normalized,
+    });
+  } catch (error) {
+    return buildActionErrorState(
+      getActionErrorMessage(error, "No fue posible guardar la configuración RAG."),
+    );
+  }
+
+  revalidatePath("/");
+
+  return buildActionRefreshSuccessState("Configuración RAG guardada correctamente.");
+}
+
+export async function updateRagConfigurationWithFeedback(
+  configurationId: string,
+  _previousState: ActionFormState,
+  formData: FormData,
+) {
+  const parsed = ragConfigurationSchema.safeParse({
+    name: asOptionalString(formData.get("name")),
+    qdrantBaseUrl: asOptionalString(formData.get("qdrantBaseUrl")),
+    qdrantApiKey: asOptionalString(formData.get("qdrantApiKey")),
+    collectionName: asOptionalString(formData.get("collectionName")),
+    vectorName: asOptionalString(formData.get("vectorName")),
+    queryModel: asOptionalString(formData.get("queryModel")),
+    payloadPath: asOptionalString(formData.get("payloadPath")),
+  });
+
+  if (!parsed.success) {
+    return buildActionErrorState(
+      getActionErrorMessage(parsed.error, "No fue posible actualizar la configuración RAG."),
+    );
+  }
+
+  try {
+    const normalized = normalizeRagConfigurationInput(parsed.data);
+
+    await prisma.ragConfiguration.update({
+      where: { id: configurationId },
+      data: normalized,
+    });
+  } catch (error) {
+    return buildActionErrorState(
+      getActionErrorMessage(error, "No fue posible actualizar la configuración RAG."),
+    );
+  }
+
+  revalidatePath("/");
+
+  return buildActionRefreshSuccessState("Configuración RAG actualizada correctamente.");
+}
+
+export async function deleteRagConfigurationWithFeedback(
+  configurationId: string,
+  _previousState: ActionFormState,
+) {
+  void _previousState;
+
+  try {
+    await prisma.ragConfiguration.delete({
+      where: { id: configurationId },
+    });
+  } catch (error) {
+    return buildActionErrorState(
+      getActionErrorMessage(error, "No fue posible eliminar la configuración RAG."),
+    );
+  }
+
+  revalidatePath("/");
+
+  return buildActionRefreshSuccessState("Configuración RAG eliminada correctamente.");
 }
 
 export async function createSessionTagWithFeedback(
@@ -2972,6 +3152,7 @@ function buildPersistedMappings(input: {
     const constantValue = parseLooseJsonValue(mapping.constantValueText);
     const manualValue = parseLooseJsonValue(mapping.manualValueText);
     const llmGeneratedValue = parseLooseJsonValue(mapping.llmGeneratedValueText);
+    const ragGeneratedValue = parseLooseJsonValue(mapping.ragGeneratedValueText);
 
     return {
       side: mapping.side as DatasetFieldSide,
@@ -2991,6 +3172,14 @@ function buildPersistedMappings(input: {
         mapping.llmGenerationMeta === undefined
           ? Prisma.JsonNull
           : (mapping.llmGenerationMeta as Prisma.InputJsonValue),
+      ragConfigurationId: mapping.ragConfigurationId.trim() || null,
+      ragPromptText: mapping.ragPromptText.trim() || null,
+      ragGeneratedValueJson:
+        ragGeneratedValue === null ? Prisma.JsonNull : (ragGeneratedValue as Prisma.InputJsonValue),
+      ragGenerationMetaJson:
+        mapping.ragGenerationMeta === undefined
+          ? Prisma.JsonNull
+          : (mapping.ragGenerationMeta as Prisma.InputJsonValue),
       resolvedPreviewJson:
         resolvedPreview === null || resolvedPreview === undefined
           ? Prisma.JsonNull
@@ -3111,6 +3300,108 @@ export async function generateDatasetFieldWithLlm(input: {
     return {
       ok: false as const,
       error: getActionErrorMessage(error, "No fue posible generar el valor para este campo."),
+    };
+  }
+}
+
+export async function generateDatasetFieldWithRag(input: {
+  ragConfigurationId: string;
+  side: "input" | "output";
+  field: DatasetSchemaField;
+  datasetSpecName: string;
+  datasetSpecSlug: string;
+  datasetSpecDescription: string;
+  promptText: string;
+  lastUserMessage: string;
+  sourceSummary: string;
+  sessionNotes: string;
+  conversationSliceJson: string;
+  surroundingContextJson: string;
+  inputPayloadJson: string;
+  outputPayloadJson: string;
+}) {
+  const parsed = datasetFieldRagGenerationSchema.safeParse(input);
+
+  if (!parsed.success) {
+    return {
+      ok: false as const,
+      error: getActionErrorMessage(parsed.error, "No fue posible preparar la consulta RAG."),
+    };
+  }
+
+  let ragConfiguration;
+
+  try {
+    ragConfiguration = await prisma.ragConfiguration.findUnique({
+      where: { id: parsed.data.ragConfigurationId },
+      select: {
+        id: true,
+        name: true,
+        qdrantBaseUrl: true,
+        qdrantApiKey: true,
+        collectionName: true,
+        vectorName: true,
+        queryModel: true,
+        payloadPath: true,
+      },
+    });
+  } catch (error) {
+    return {
+      ok: false as const,
+      error: getActionErrorMessage(error, "No fue posible cargar la configuración RAG."),
+    };
+  }
+
+  if (!ragConfiguration) {
+    return {
+      ok: false as const,
+      error: "La configuración RAG seleccionada ya no existe.",
+    };
+  }
+
+  const queryText = buildDatasetFieldRagQuery(parsed.data);
+
+  try {
+    const result = await queryQdrantTopPoint({
+      baseUrl: ragConfiguration.qdrantBaseUrl,
+      apiKey: ragConfiguration.qdrantApiKey,
+      collectionName: ragConfiguration.collectionName,
+      vectorName: ragConfiguration.vectorName,
+      queryModel: ragConfiguration.queryModel,
+      payloadPath: ragConfiguration.payloadPath,
+      queryText,
+    });
+
+    if (!result.point) {
+      return {
+        ok: false as const,
+        error: "Qdrant no devolvió resultados para esta consulta.",
+      };
+    }
+
+    const generatedAt = new Date().toISOString();
+
+    return {
+      ok: true as const,
+      valueText: stringifyJsonValue(result.value),
+      metadata: {
+        configurationId: ragConfiguration.id,
+        configurationName: ragConfiguration.name,
+        collectionName: ragConfiguration.collectionName,
+        vectorName: ragConfiguration.vectorName,
+        queryModel: ragConfiguration.queryModel,
+        payloadPath: ragConfiguration.payloadPath,
+        generatedAt,
+        queryText: parsed.data.promptText,
+        score: typeof result.point.score === "number" ? result.point.score : null,
+        pointId: result.point.id ?? null,
+        retrievalMode: "qdrant_top_1",
+      } satisfies JsonValue,
+    };
+  } catch (error) {
+    return {
+      ok: false as const,
+      error: getActionErrorMessage(error, "No fue posible recuperar el valor desde Qdrant."),
     };
   }
 }

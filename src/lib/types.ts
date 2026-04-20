@@ -253,6 +253,7 @@ export const DATASET_MAPPING_SOURCES = [
   "source.source_summary",
   "source.session_notes",
   "llm_generated",
+  "rag_generated",
   "manual",
   "constant",
 ] as const;
@@ -336,6 +337,10 @@ export type DatasetFieldMappingRecord = {
   llmPromptText: string;
   llmGeneratedValueText: string;
   llmGenerationMeta?: JsonValue;
+  ragConfigurationId: string;
+  ragPromptText: string;
+  ragGeneratedValueText: string;
+  ragGenerationMeta?: JsonValue;
   resolvedPreview?: JsonValue;
 };
 

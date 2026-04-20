@@ -31,7 +31,15 @@ export default async function NewDatasetExamplePage({
 
   await ensureDefaultDatasetSpecs();
 
-  const [session, selectedMessages, contextMessages, datasetSpecs, lastUsedDatasetExample, llmConfigurations] =
+  const [
+    session,
+    selectedMessages,
+    contextMessages,
+    datasetSpecs,
+    lastUsedDatasetExample,
+    llmConfigurations,
+    ragConfigurations,
+  ] =
     await Promise.all([
       prisma.session.findUnique({
         where: { id: sessionId },
@@ -80,6 +88,16 @@ export default async function NewDatasetExamplePage({
           id: true,
           name: true,
           chatModel: true,
+          updatedAt: true,
+        },
+      }),
+      prisma.ragConfiguration.findMany({
+        orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
+        select: {
+          id: true,
+          name: true,
+          collectionName: true,
+          queryModel: true,
           updatedAt: true,
         },
       }),
@@ -136,6 +154,13 @@ export default async function NewDatasetExamplePage({
         id: configuration.id,
         name: configuration.name,
         chatModel: configuration.chatModel,
+        updatedAt: configuration.updatedAt.toISOString(),
+      }))}
+      ragConfigurations={ragConfigurations.map((configuration) => ({
+        id: configuration.id,
+        name: configuration.name,
+        collectionName: configuration.collectionName,
+        queryModel: configuration.queryModel,
         updatedAt: configuration.updatedAt.toISOString(),
       }))}
       initialDatasetSpecId={selectedDatasetSpec?.id ?? ""}

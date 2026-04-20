@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { LlmConfigurationManager } from "@/components/llm-configuration-manager";
 import { ProjectCreateForm } from "@/components/project-create-form";
+import { RagConfigurationManager } from "@/components/rag-configuration-manager";
 import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
@@ -44,7 +45,7 @@ function ProjectGlyph({ index }: { index: number }) {
 }
 
 export default async function ProjectsPage() {
-  const [projects, llmConfigurations] = await Promise.all([
+  const [projects, llmConfigurations, ragConfigurations] = await Promise.all([
     prisma.project.findMany({
       orderBy: { createdAt: "desc" },
       include: {
@@ -57,6 +58,9 @@ export default async function ProjectsPage() {
       },
     }),
     prisma.llmConfiguration.findMany({
+      orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
+    }),
+    prisma.ragConfiguration.findMany({
       orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
     }),
   ]);
@@ -170,8 +174,8 @@ export default async function ProjectsPage() {
         <div>
           <span className="section-kicker">Infrastructure</span>
           <p className="mt-4 max-w-2xl text-base leading-8 text-[var(--muted)]">
-            Las configuraciones LLM globales siguen disponibles desde la home para preparar providers, endpoints y
-            prompts reutilizables antes de abrir o continuar una sesión.
+            Las configuraciones globales de LLM y RAG siguen disponibles desde la home para preparar providers,
+            endpoints, colecciones y prompts reutilizables antes de abrir o continuar una sesión.
           </p>
         </div>
         <LlmConfigurationManager
@@ -182,6 +186,20 @@ export default async function ProjectsPage() {
             chatBaseUrl: configuration.chatBaseUrl || "",
             chatApiKey: configuration.chatApiKey || "",
             systemPrompt: configuration.systemPrompt || "",
+            createdAt: configuration.createdAt.toISOString(),
+            updatedAt: configuration.updatedAt.toISOString(),
+          }))}
+        />
+        <RagConfigurationManager
+          configurations={ragConfigurations.map((configuration) => ({
+            id: configuration.id,
+            name: configuration.name,
+            qdrantBaseUrl: configuration.qdrantBaseUrl,
+            qdrantApiKey: configuration.qdrantApiKey || "",
+            collectionName: configuration.collectionName,
+            vectorName: configuration.vectorName || "",
+            queryModel: configuration.queryModel || "",
+            payloadPath: configuration.payloadPath || "",
             createdAt: configuration.createdAt.toISOString(),
             updatedAt: configuration.updatedAt.toISOString(),
           }))}

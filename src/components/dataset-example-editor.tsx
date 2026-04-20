@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useActionState, useMemo, useState } from "react";
-import { generateDatasetFieldWithLlm } from "@/app/actions";
+import { generateDatasetFieldWithLlm, generateDatasetFieldWithRag } from "@/app/actions";
 import { FormLabel } from "@/components/form-label";
 import { FormSubmitButton } from "@/components/form-submit-button";
 import { useToast } from "@/components/toast-provider";
@@ -45,6 +45,14 @@ type GlobalLlmConfigurationOption = {
   updatedAt: string;
 };
 
+type GlobalRagConfigurationOption = {
+  id: string;
+  name: string;
+  collectionName: string;
+  queryModel: string | null;
+  updatedAt: string;
+};
+
 type StoredMapping = {
   side: "input" | "output";
   fieldKey: string;
@@ -57,6 +65,10 @@ type StoredMapping = {
   llmPromptText?: string | null;
   llmGeneratedValueJson?: JsonValue | null;
   llmGenerationMetaJson?: JsonValue | null;
+  ragConfigurationId?: string | null;
+  ragPromptText?: string | null;
+  ragGeneratedValueJson?: JsonValue | null;
+  ragGenerationMetaJson?: JsonValue | null;
   resolvedPreviewJson: JsonValue | null;
 };
 
@@ -135,6 +147,7 @@ const SOURCE_LABELS: Record<DatasetMappingSourceKey, string> = {
   "source.source_summary": "Mapear resumen",
   "source.session_notes": "Mapear notas",
   llm_generated: "Generar con LLM",
+  rag_generated: "Recuperar con RAG",
   manual: "Texto manual",
   constant: "Valor constante",
 };
@@ -146,6 +159,7 @@ const SOURCE_BADGES: Record<DatasetFieldMappingRecord["sourceKey"], string> = {
   "source.source_summary": "Resumen",
   "source.session_notes": "Notas",
   llm_generated: "LLM",
+  rag_generated: "RAG",
   manual: "Manual",
   constant: "Const",
 };
@@ -223,6 +237,7 @@ export function DatasetExampleEditor(props: {
   sourceSlice: SourceSliceRecord;
   datasetSpecs: DatasetSpecOption[];
   llmConfigurations: GlobalLlmConfigurationOption[];
+  ragConfigurations: GlobalRagConfigurationOption[];
   initialDatasetSpecId: string;
   initialTitle: string;
   initialReviewStatus: (typeof DATASET_EXAMPLE_STATUSES)[number];
@@ -276,11 +291,14 @@ export function DatasetExampleEditor(props: {
 
   const selectedSpec =
     props.datasetSpecs.find((spec) => spec.id === datasetSpecId) ?? props.datasetSpecs[0] ?? null;
-  const liveSourceSlice = {
-    ...props.sourceSlice,
-    title: sourceTitle,
-    sourceSummary,
-  };
+  const liveSourceSlice = useMemo(
+    () => ({
+      ...props.sourceSlice,
+      title: sourceTitle,
+      sourceSummary,
+    }),
+    [props.sourceSlice, sourceSummary, sourceTitle],
+  );
   const computedInputPayload = selectedSpec
     ? buildPayloadFromMappings({
         side: "input",
@@ -527,6 +545,84 @@ export function DatasetExampleEditor(props: {
     }
   }
 
+  async function handleRetrieveField(
+    side: "input" | "output",
+    field: DatasetSchemaField,
+    mapping: DatasetFieldMappingRecord,
+  ) {
+    if (!selectedSpec) {
+      return;
+    }
+
+    if (!mapping.ragConfigurationId.trim()) {
+      pushToast({
+        title: "Falta configuracion RAG",
+        description: "Selecciona una configuracion global antes de consultar este campo.",
+        variant: "error",
+        durationMs: 7000,
+      });
+      return;
+    }
+
+    if (!mapping.ragPromptText.trim()) {
+      pushToast({
+        title: "Falta instruccion",
+        description: "Escribe una instruccion especifica para este campo antes de consultar.",
+        variant: "error",
+        durationMs: 7000,
+      });
+      return;
+    }
+
+    const currentFieldKey = `${side}:${field.key}`;
+    setGeneratingFieldKey(currentFieldKey);
+
+    try {
+      const result = await generateDatasetFieldWithRag({
+        ragConfigurationId: mapping.ragConfigurationId,
+        side,
+        field,
+        datasetSpecName: selectedSpec.name,
+        datasetSpecSlug: selectedSpec.slug,
+        datasetSpecDescription: selectedSpec.description,
+        promptText: mapping.ragPromptText,
+        lastUserMessage: liveSourceSlice.lastUserMessage,
+        sourceSummary: liveSourceSlice.sourceSummary,
+        sessionNotes,
+        conversationSliceJson: JSON.stringify(liveSourceSlice.conversationSlice, null, 2),
+        surroundingContextJson: JSON.stringify(liveSourceSlice.surroundingContext, null, 2),
+        inputPayloadJson: JSON.stringify(computedInputPayload, null, 2),
+        outputPayloadJson: JSON.stringify(computedOutputPayload, null, 2),
+      });
+
+      if (!result.ok) {
+        pushToast({
+          title: "No fue posible recuperar el campo",
+          description: result.error,
+          variant: "error",
+          durationMs: 7000,
+        });
+        return;
+      }
+
+      updateMapping(side, field.key, (current) => ({
+        ...current,
+        sourceKey: "rag_generated",
+        ragGeneratedValueText: result.valueText,
+        ragGenerationMeta: result.metadata,
+      }));
+
+      pushToast({
+        title: "Campo recuperado",
+        description: `${field.key} ya tiene un valor recuperado desde Qdrant.`,
+        variant: "success",
+        durationMs: 5000,
+      });
+    } finally {
+      setGeneratingFieldKey(null);
+    }
+  }
+
   const renderRows = (side: "input" | "output", schema: DatasetSpecOption["inputSchema"]) =>
     schema.map((field) => {
       const mapping =
@@ -539,9 +635,17 @@ export function DatasetExampleEditor(props: {
       const preview = resolveFieldMapping(liveSourceSlice, mapping);
       const currentFieldKey = `${side}:${field.key}`;
       const isGenerating = generatingFieldKey === currentFieldKey;
-      const generationMeta = asRecord(mapping.llmGenerationMeta);
-      const generatedAt = formatDateTime(
-        typeof generationMeta?.generatedAt === "string" ? generationMeta.generatedAt : undefined,
+      const llmGenerationMeta = asRecord(mapping.llmGenerationMeta);
+      const llmGeneratedAt = formatDateTime(
+        typeof llmGenerationMeta?.generatedAt === "string"
+          ? llmGenerationMeta.generatedAt
+          : undefined,
+      );
+      const ragGenerationMeta = asRecord(mapping.ragGenerationMeta);
+      const ragGeneratedAt = formatDateTime(
+        typeof ragGenerationMeta?.generatedAt === "string"
+          ? ragGenerationMeta.generatedAt
+          : undefined,
       );
       const sourceSnapshot = getSourceSnapshot(mapping.sourceKey, liveSourceSlice);
 
@@ -584,6 +688,7 @@ export function DatasetExampleEditor(props: {
                 <option value="source.source_summary">Mapear: resumen curatorial</option>
                 <option value="source.session_notes">Mapear: notas de sesion</option>
                 <option value="llm_generated">Generar con LLM</option>
+                <option value="rag_generated">Recuperar con RAG</option>
                 <option value="manual">Texto manual</option>
                 <option value="constant">Valor constante</option>
               </select>
@@ -797,22 +902,22 @@ export function DatasetExampleEditor(props: {
                     </button>
                   </div>
 
-                  {generationMeta ? (
+                  {llmGenerationMeta ? (
                     <div className="dataset-mapping-mini-panel mt-4">
                       <p className="dataset-mapping-eyebrow">Proveniencia LLM</p>
                       <div className="mt-3 space-y-1 text-sm text-[var(--muted)]">
                         <p>
-                          Configuracion: {typeof generationMeta.configurationName === "string" ? generationMeta.configurationName : "Sin nombre"}
+                          Configuracion: {typeof llmGenerationMeta.configurationName === "string" ? llmGenerationMeta.configurationName : "Sin nombre"}
                         </p>
                         <p>
-                          Modelo: {typeof generationMeta.model === "string" ? generationMeta.model : "No disponible"}
+                          Modelo: {typeof llmGenerationMeta.model === "string" ? llmGenerationMeta.model : "No disponible"}
                         </p>
-                        {generatedAt ? <p>Generado: {generatedAt}</p> : null}
-                        {typeof generationMeta.confidence === "number" ? (
-                          <p>Confianza estimada: {Math.round(generationMeta.confidence * 100)}%</p>
+                        {llmGeneratedAt ? <p>Generado: {llmGeneratedAt}</p> : null}
+                        {typeof llmGenerationMeta.confidence === "number" ? (
+                          <p>Confianza estimada: {Math.round(llmGenerationMeta.confidence * 100)}%</p>
                         ) : null}
-                        {typeof generationMeta.notes === "string" && generationMeta.notes.trim() ? (
-                          <p>Notas: {generationMeta.notes}</p>
+                        {typeof llmGenerationMeta.notes === "string" && llmGenerationMeta.notes.trim() ? (
+                          <p>Notas: {llmGenerationMeta.notes}</p>
                         ) : null}
                       </div>
                     </div>
@@ -855,6 +960,185 @@ export function DatasetExampleEditor(props: {
                   </div>
                 </section>
               ) : null}
+
+              {mapping.sourceKey === "rag_generated" ? (
+                <section className="dataset-mapping-llm-surface">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <div className="dataset-mapping-llm-icon" aria-hidden="true">
+                        R
+                      </div>
+                      <div>
+                        <p className="dataset-mapping-eyebrow">Configuracion global RAG</p>
+                        <p className="text-sm text-[var(--muted)]">
+                          Selecciona Qdrant, define la instruccion de recuperacion y usa siempre el top 1.
+                        </p>
+                      </div>
+                    </div>
+                    {renderBadge("RAG", "accent")}
+                  </div>
+
+                  <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_260px]">
+                    <label className="block space-y-2">
+                      <FormLabel className="dataset-mapping-control-label">
+                        Configuracion global RAG
+                      </FormLabel>
+                      <select
+                        className="field"
+                        value={mapping.ragConfigurationId}
+                        onChange={(event) => {
+                          const nextValue = event.target.value;
+                          updateMapping(side, field.key, (current) => ({
+                            ...current,
+                            ragConfigurationId: nextValue,
+                          }));
+                        }}
+                      >
+                        <option value="">Selecciona una configuracion</option>
+                        {props.ragConfigurations.map((configuration) => (
+                          <option key={configuration.id} value={configuration.id}>
+                            {configuration.name} · {configuration.collectionName}
+                            {configuration.queryModel ? ` · ${configuration.queryModel}` : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <div className="dataset-mapping-mini-panel">
+                      <p className="dataset-mapping-eyebrow">Consulta enviada</p>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <span className="dataset-mapping-chip">top k 1</span>
+                        <span className="dataset-mapping-chip">qdrant</span>
+                        <span className="dataset-mapping-chip">transcript</span>
+                        <span className="dataset-mapping-chip">payload actual</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <label className="mt-4 block space-y-2">
+                    <FormLabel className="dataset-mapping-control-label">
+                      Instruccion para este campo
+                    </FormLabel>
+                    <textarea
+                      className="field min-h-28"
+                      value={mapping.ragPromptText}
+                      onChange={(event) => {
+                        const nextValue = event.target.value;
+                        updateMapping(side, field.key, (current) => ({
+                          ...current,
+                          ragPromptText: nextValue,
+                        }));
+                      }}
+                      placeholder="Busca el fragmento o payload mas util para este campo y usa solo el primer resultado."
+                    />
+                  </label>
+
+                  <label className="mt-4 block space-y-2">
+                    <FormLabel className="dataset-mapping-control-label">Resultado recuperado</FormLabel>
+                    <textarea
+                      className="field min-h-40 font-mono text-xs"
+                      value={mapping.ragGeneratedValueText}
+                      onChange={(event) => {
+                        const nextValue = event.target.value;
+                        updateMapping(side, field.key, (current) => ({
+                          ...current,
+                          ragGeneratedValueText: nextValue,
+                        }));
+                      }}
+                      placeholder="Aqui aparecera el payload recuperado desde Qdrant."
+                    />
+                  </label>
+
+                  <div className="mt-4 flex flex-wrap items-center gap-3">
+                    <button
+                      type="button"
+                      className="button-primary"
+                      onClick={() => handleRetrieveField(side, field, mapping)}
+                      disabled={isGenerating || props.ragConfigurations.length === 0}
+                    >
+                      {isGenerating
+                        ? "Consultando..."
+                        : mapping.ragGeneratedValueText.trim()
+                          ? "Consultar de nuevo"
+                          : "Consultar"}
+                    </button>
+                    <button
+                      type="button"
+                      className="button-secondary"
+                      onClick={() => {
+                        updateMapping(side, field.key, (current) => ({
+                          ...current,
+                          ragGeneratedValueText: "",
+                          ragGenerationMeta: undefined,
+                        }));
+                      }}
+                      disabled={isGenerating}
+                    >
+                      Limpiar resultado
+                    </button>
+                  </div>
+
+                  {ragGenerationMeta ? (
+                    <div className="dataset-mapping-mini-panel mt-4">
+                      <p className="dataset-mapping-eyebrow">Proveniencia RAG</p>
+                      <div className="mt-3 space-y-1 text-sm text-[var(--muted)]">
+                        <p>
+                          Configuracion: {typeof ragGenerationMeta.configurationName === "string" ? ragGenerationMeta.configurationName : "Sin nombre"}
+                        </p>
+                        <p>
+                          Coleccion: {typeof ragGenerationMeta.collectionName === "string" ? ragGenerationMeta.collectionName : "No disponible"}
+                        </p>
+                        {typeof ragGenerationMeta.queryModel === "string" && ragGenerationMeta.queryModel.trim() ? (
+                          <p>Modelo de query: {ragGenerationMeta.queryModel}</p>
+                        ) : null}
+                        {ragGeneratedAt ? <p>Consultado: {ragGeneratedAt}</p> : null}
+                        {typeof ragGenerationMeta.score === "number" ? (
+                          <p>Score: {ragGenerationMeta.score.toFixed(4)}</p>
+                        ) : null}
+                        {typeof ragGenerationMeta.pointId === "string" || typeof ragGenerationMeta.pointId === "number" ? (
+                          <p>Point ID: {String(ragGenerationMeta.pointId)}</p>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  <div className="mt-4 grid gap-3 md:grid-cols-2">
+                    <label className="block space-y-2">
+                      <FormLabel className="dataset-mapping-control-label">
+                        Path post-retrieval
+                      </FormLabel>
+                      <input
+                        className="field"
+                        value={mapping.sourcePath}
+                        onChange={(event) => {
+                          const nextValue = event.target.value;
+                          updateMapping(side, field.key, (current) => ({
+                            ...current,
+                            sourcePath: nextValue,
+                          }));
+                        }}
+                        placeholder="answer.text o chunk"
+                      />
+                    </label>
+
+                    <label className="block space-y-2">
+                      <FormLabel className="dataset-mapping-control-label">Transforms</FormLabel>
+                      <input
+                        className="field"
+                        value={serializeTransformChain(mapping.transformChain)}
+                        onChange={(event) => {
+                          const nextValue = parseTransformChainText(event.target.value);
+                          updateMapping(side, field.key, (current) => ({
+                            ...current,
+                            transformChain: nextValue,
+                          }));
+                        }}
+                        placeholder="trim | pick_path:value"
+                      />
+                    </label>
+                  </div>
+                </section>
+              ) : null}
             </div>
 
             <aside className="space-y-4">
@@ -869,6 +1153,9 @@ export function DatasetExampleEditor(props: {
                   </p>
                   {mapping.sourceKey === "llm_generated" && mapping.llmGeneratedValueText.trim() ? (
                     <p>Resultado LLM listo para persistir o ajustar.</p>
+                  ) : null}
+                  {mapping.sourceKey === "rag_generated" && mapping.ragGeneratedValueText.trim() ? (
+                    <p>Resultado RAG top 1 listo para persistir o ajustar.</p>
                   ) : null}
                   {mapping.sourceKey === "manual" && mapping.manualValueText.trim() ? (
                     <p>Valor manual presente.</p>
@@ -1106,6 +1393,24 @@ export function DatasetExampleEditor(props: {
                       props.llmConfigurations.slice(0, 4).map((configuration) => (
                         <p key={configuration.id}>
                           {configuration.name} · {configuration.chatModel}
+                        </p>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                <div className="rounded-[1rem] border border-[var(--line)] bg-white/80 p-4">
+                  <p className="font-[var(--font-label)] text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--muted)]">
+                    Configuraciones RAG globales
+                  </p>
+                  <div className="mt-3 space-y-2 text-sm text-[var(--muted)]">
+                    {props.ragConfigurations.length === 0 ? (
+                      <p>No hay configuraciones RAG guardadas todavia.</p>
+                    ) : (
+                      props.ragConfigurations.slice(0, 4).map((configuration) => (
+                        <p key={configuration.id}>
+                          {configuration.name} · {configuration.collectionName}
+                          {configuration.queryModel ? ` · ${configuration.queryModel}` : ""}
                         </p>
                       ))
                     )}
