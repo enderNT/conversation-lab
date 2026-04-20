@@ -32,6 +32,7 @@ import {
   parseStrictJsonValue as parseStrictDatasetJsonValue,
   resolveFieldMapping,
   sourceSliceFromPrisma,
+  stringifyJsonValue,
   toConversationSlice as toDatasetConversationSlice,
   toExportDatasetExample,
   validateDatasetExample as validateDatasetExamplePayload,
@@ -53,7 +54,9 @@ import {
   DATASET_SCHEMA_FIELD_TYPES,
   TASK_TYPES,
   type DatasetFieldMappingRecord,
+  type DatasetSchemaField,
   type JsonObject,
+  type JsonValue,
 } from "@/lib/types";
 import { asOptionalString } from "@/lib/utils";
 
@@ -183,6 +186,10 @@ const datasetFieldMappingSchema = z.object({
   transformChain: z.array(z.string().trim()),
   constantValueText: z.string().default(""),
   manualValueText: z.string().default(""),
+  llmConfigurationId: z.string().default(""),
+  llmPromptText: z.string().default(""),
+  llmGeneratedValueText: z.string().default(""),
+  llmGenerationMeta: z.any().optional(),
 });
 
 const datasetExampleSchema = z.object({
@@ -195,6 +202,23 @@ const datasetExampleSchema = z.object({
   mappingsJson: z.string().trim().default("[]"),
   reviewStatus: z.enum(DATASET_EXAMPLE_STATUSES).default("draft"),
   updatedBy: z.string().trim().default("human"),
+});
+
+const datasetFieldGenerationSchema = z.object({
+  llmConfigurationId: z.string().trim().min(1, "Selecciona una configuración LLM global."),
+  side: z.enum(DATASET_FIELD_SIDES),
+  field: datasetSchemaFieldSchema,
+  datasetSpecName: z.string().trim().default(""),
+  datasetSpecSlug: z.string().trim().default(""),
+  datasetSpecDescription: z.string().trim().default(""),
+  promptText: z.string().trim().min(1, "Escribe una instrucción para el campo."),
+  lastUserMessage: z.string().default(""),
+  sourceSummary: z.string().default(""),
+  sessionNotes: z.string().default(""),
+  conversationSliceJson: z.string().trim().default("[]"),
+  surroundingContextJson: z.string().trim().default("[]"),
+  inputPayloadJson: z.string().trim().default("{}"),
+  outputPayloadJson: z.string().trim().default("{}"),
 });
 
 function buildActionErrorState(message: string): ActionFormState {
@@ -278,6 +302,103 @@ function parseDatasetJsonObject(value: string, label: string) {
   }
 
   return parsedValue as JsonObject;
+}
+
+function buildDatasetFieldGenerationPrompt(input: {
+  side: "input" | "output";
+  field: DatasetSchemaField;
+  datasetSpecName: string;
+  datasetSpecSlug: string;
+  datasetSpecDescription: string;
+  promptText: string;
+  lastUserMessage: string;
+  sourceSummary: string;
+  sessionNotes: string;
+  conversationSliceJson: string;
+  surroundingContextJson: string;
+  inputPayloadJson: string;
+  outputPayloadJson: string;
+}) {
+  const enumHint = input.field.enumValues?.length
+    ? `Valores permitidos: ${input.field.enumValues.join(", ")}.`
+    : "";
+
+  return [
+    "Genera el valor de un unico campo para un dataset example de DSPy.",
+    `Spec: ${input.datasetSpecName || input.datasetSpecSlug || "dataset_spec"}.`,
+    input.datasetSpecDescription ? `Descripcion del spec: ${input.datasetSpecDescription}` : "",
+    `Campo destino: ${input.field.key}.`,
+    `Lado: ${input.side}.`,
+    `Tipo esperado: ${input.field.type}.`,
+    `Requerido: ${input.field.required ? "si" : "no"}.`,
+    input.field.description ? `Descripcion del campo: ${input.field.description}` : "",
+    enumHint,
+    "Devuelve SOLO JSON valido, sin markdown ni texto extra.",
+    'Usa exactamente esta forma: {"value": ..., "confidence": 0.0, "notes": "..."}.',
+    "El contenido de value debe respetar el tipo esperado del campo.",
+    "Si el valor debe salir de la conversacion o del contexto, sintetizalo de forma util para entrenamiento, no copies ruido innecesario.",
+    `Instruccion del operador: ${input.promptText}`,
+    `Ultimo mensaje del usuario: ${input.lastUserMessage || ""}`,
+    `Resumen curatorial: ${input.sourceSummary || ""}`,
+    `Notas de sesion: ${input.sessionNotes || ""}`,
+    "Transcript seleccionado:",
+    input.conversationSliceJson,
+    "Contexto cercano:",
+    input.surroundingContextJson,
+    "Payload input actual:",
+    input.inputPayloadJson,
+    "Payload output actual:",
+    input.outputPayloadJson,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function parseGeneratedDatasetFieldResponse(rawText: string, field: DatasetSchemaField) {
+  const trimmed = rawText.trim();
+
+  if (!trimmed) {
+    throw new Error("El modelo devolvio una respuesta vacia para este campo.");
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed) as JsonValue;
+
+    if (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      !Array.isArray(parsed) &&
+      "value" in parsed
+    ) {
+      const record = parsed as Record<string, JsonValue>;
+      const confidence = typeof record.confidence === "number" ? record.confidence : null;
+      const notes = typeof record.notes === "string" ? record.notes : "";
+
+      return {
+        value: (record.value ?? null) as JsonValue,
+        confidence,
+        notes,
+      };
+    }
+
+    return {
+      value: parsed,
+      confidence: null,
+      notes: "",
+    };
+  } catch {
+    if (["string", "datetime", "enum"].includes(field.type)) {
+      return {
+        value: trimmed,
+        confidence: null,
+        notes: "",
+      };
+    }
+
+    throw new Error(
+      `El modelo devolvio texto no JSON para ${field.key}. Ajusta la instruccion o usa un campo manual.`,
+    );
+  }
 }
 
 function parseArtifactList(value: string) {
@@ -2850,6 +2971,7 @@ function buildPersistedMappings(input: {
     const resolvedPreview = resolveFieldMapping(input.sourceSlice, mapping);
     const constantValue = parseLooseJsonValue(mapping.constantValueText);
     const manualValue = parseLooseJsonValue(mapping.manualValueText);
+    const llmGeneratedValue = parseLooseJsonValue(mapping.llmGeneratedValueText);
 
     return {
       side: mapping.side as DatasetFieldSide,
@@ -2861,6 +2983,14 @@ function buildPersistedMappings(input: {
         constantValue === null ? Prisma.JsonNull : (constantValue as Prisma.InputJsonValue),
       manualValueJson:
         manualValue === null ? Prisma.JsonNull : (manualValue as Prisma.InputJsonValue),
+      llmConfigurationId: mapping.llmConfigurationId.trim() || null,
+      llmPromptText: mapping.llmPromptText.trim() || null,
+      llmGeneratedValueJson:
+        llmGeneratedValue === null ? Prisma.JsonNull : (llmGeneratedValue as Prisma.InputJsonValue),
+      llmGenerationMetaJson:
+        mapping.llmGenerationMeta === undefined
+          ? Prisma.JsonNull
+          : (mapping.llmGenerationMeta as Prisma.InputJsonValue),
       resolvedPreviewJson:
         resolvedPreview === null || resolvedPreview === undefined
           ? Prisma.JsonNull
@@ -2882,6 +3012,107 @@ export async function createSourceSliceFromSelection(
     startOrderIndex,
     endOrderIndex,
   );
+}
+
+export async function generateDatasetFieldWithLlm(input: {
+  llmConfigurationId: string;
+  side: "input" | "output";
+  field: DatasetSchemaField;
+  datasetSpecName: string;
+  datasetSpecSlug: string;
+  datasetSpecDescription: string;
+  promptText: string;
+  lastUserMessage: string;
+  sourceSummary: string;
+  sessionNotes: string;
+  conversationSliceJson: string;
+  surroundingContextJson: string;
+  inputPayloadJson: string;
+  outputPayloadJson: string;
+}) {
+  const parsed = datasetFieldGenerationSchema.safeParse(input);
+
+  if (!parsed.success) {
+    return {
+      ok: false as const,
+      error: getActionErrorMessage(parsed.error, "No fue posible preparar la generacion del campo."),
+    };
+  }
+
+  let llmConfiguration;
+
+  try {
+    llmConfiguration = await prisma.llmConfiguration.findUnique({
+      where: { id: parsed.data.llmConfigurationId },
+      select: {
+        id: true,
+        name: true,
+        chatModel: true,
+        chatBaseUrl: true,
+        chatApiKey: true,
+        systemPrompt: true,
+      },
+    });
+  } catch (error) {
+    return {
+      ok: false as const,
+      error: getActionErrorMessage(error, "No fue posible cargar la configuracion LLM."),
+    };
+  }
+
+  if (!llmConfiguration) {
+    return {
+      ok: false as const,
+      error: "La configuracion LLM seleccionada ya no existe.",
+    };
+  }
+
+  if (!llmConfiguration.chatModel.trim()) {
+    return {
+      ok: false as const,
+      error: "La configuracion LLM no tiene un modelo definido.",
+    };
+  }
+
+  const prompt = buildDatasetFieldGenerationPrompt(parsed.data);
+
+  try {
+    const response = await generateAssistantReply({
+      model: llmConfiguration.chatModel,
+      baseUrl: llmConfiguration.chatBaseUrl,
+      apiKey: llmConfiguration.chatApiKey,
+      systemPrompt: llmConfiguration.systemPrompt,
+      messages: [
+        {
+          role: "user",
+          text: prompt,
+        },
+      ],
+    });
+
+    const generated = parseGeneratedDatasetFieldResponse(response.text, parsed.data.field);
+    const generatedAt = new Date().toISOString();
+
+    return {
+      ok: true as const,
+      valueText: stringifyJsonValue(generated.value),
+      metadata: {
+        configurationId: llmConfiguration.id,
+        configurationName: llmConfiguration.name,
+        model: response.model,
+        generatedAt,
+        responseId: response.responseId,
+        promptText: parsed.data.promptText,
+        confidence: generated.confidence,
+        notes: generated.notes,
+      } satisfies JsonValue,
+    };
+  } catch (error) {
+    return {
+      ok: false as const,
+      error: getActionErrorMessage(error, "No fue posible generar el valor para este campo."),
+    };
+  }
 }
 
 export async function createDatasetSpec(formData: FormData) {

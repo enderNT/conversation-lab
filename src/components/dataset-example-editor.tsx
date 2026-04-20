@@ -1,7 +1,8 @@
 "use client";
 
 import { useActionState, useState } from "react";
-import type { ActionFormState } from "@/lib/form-state";
+import { generateDatasetFieldWithLlm } from "@/app/actions";
+import { EMPTY_ACTION_FORM_STATE, type ActionFormState } from "@/lib/form-state";
 import {
   buildDefaultMappings,
   buildPayloadFromMappings,
@@ -19,10 +20,10 @@ import type {
   SourceSliceRecord,
 } from "@/lib/types";
 import { DATASET_EXAMPLE_STATUSES } from "@/lib/types";
-import { EMPTY_ACTION_FORM_STATE } from "@/lib/form-state";
 import { FormLabel } from "@/components/form-label";
 import { FormSubmitButton } from "@/components/form-submit-button";
 import { StatusBadge } from "@/components/status-badge";
+import { useToast } from "@/components/toast-provider";
 import { useActionFeedbackToast } from "@/components/use-action-feedback-toast";
 
 type DatasetSpecOption = {
@@ -36,6 +37,13 @@ type DatasetSpecOption = {
   version: number;
 };
 
+type GlobalLlmConfigurationOption = {
+  id: string;
+  name: string;
+  chatModel: string;
+  updatedAt: string;
+};
+
 type StoredMapping = {
   side: "input" | "output";
   fieldKey: string;
@@ -44,6 +52,10 @@ type StoredMapping = {
   transformChainJson: JsonValue;
   constantValueJson: JsonValue | null;
   manualValueJson: JsonValue | null;
+  llmConfigurationId?: string | null;
+  llmPromptText?: string | null;
+  llmGeneratedValueJson?: JsonValue | null;
+  llmGenerationMetaJson?: JsonValue | null;
   resolvedPreviewJson: JsonValue | null;
 };
 
@@ -51,26 +63,48 @@ function serializeMappings(mappings: DatasetFieldMappingRecord[]) {
   return JSON.stringify(mappings, null, 2);
 }
 
-function prettyJson(value: JsonValue) {
+function prettyJson(value: JsonValue | undefined) {
+  if (value === undefined) {
+    return "Sin resolver todavía";
+  }
+
   return typeof value === "string" ? value : JSON.stringify(value, null, 2);
 }
 
-export function DatasetExampleEditor({
-  mode,
-  sourceSlice,
-  datasetSpecs,
-  initialDatasetSpecId,
-  initialTitle,
-  initialReviewStatus,
-  initialInputPayload,
-  initialOutputPayload,
-  initialMappings,
-  initialValidationState,
-  action,
-}: {
+function asRecord(value: JsonValue | undefined) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return null;
+  }
+
+  return value as Record<string, JsonValue>;
+}
+
+function formatDateTime(value: string | undefined) {
+  if (!value) {
+    return null;
+  }
+
+  const parsed = new Date(value);
+
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+
+  return new Intl.DateTimeFormat("es-ES", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(parsed);
+}
+
+function isDirectSource(sourceKey: DatasetFieldMappingRecord["sourceKey"]) {
+  return sourceKey.startsWith("source.");
+}
+
+export function DatasetExampleEditor(props: {
   mode: "create" | "edit";
   sourceSlice: SourceSliceRecord;
   datasetSpecs: DatasetSpecOption[];
+  llmConfigurations: GlobalLlmConfigurationOption[];
   initialDatasetSpecId: string;
   initialTitle: string;
   initialReviewStatus: (typeof DATASET_EXAMPLE_STATUSES)[number];
@@ -80,42 +114,48 @@ export function DatasetExampleEditor({
   initialValidationState?: DatasetValidationState | null;
   action: (state: ActionFormState, formData: FormData) => Promise<ActionFormState>;
 }) {
-  const [state, formAction] = useActionState(action, EMPTY_ACTION_FORM_STATE);
-  const [datasetSpecId, setDatasetSpecId] = useState(initialDatasetSpecId);
-  const [title, setTitle] = useState(initialTitle);
-  const [sourceTitle, setSourceTitle] = useState(sourceSlice.title);
-  const [sourceSummary, setSourceSummary] = useState(sourceSlice.sourceSummary);
-  const [reviewStatus, setReviewStatus] = useState(initialReviewStatus);
+  const [state, formAction] = useActionState(props.action, EMPTY_ACTION_FORM_STATE);
+  const [datasetSpecId, setDatasetSpecId] = useState(props.initialDatasetSpecId);
+  const [title, setTitle] = useState(props.initialTitle);
+  const [sourceTitle, setSourceTitle] = useState(props.sourceSlice.title);
+  const [sourceSummary, setSourceSummary] = useState(props.sourceSlice.sourceSummary);
+  const [reviewStatus, setReviewStatus] = useState(props.initialReviewStatus);
+  const [generatingFieldKey, setGeneratingFieldKey] = useState<string | null>(null);
+  const [inputPayloadText, setInputPayloadText] = useState(
+    JSON.stringify(props.initialInputPayload, null, 2),
+  );
+  const [outputPayloadText, setOutputPayloadText] = useState(
+    JSON.stringify(props.initialOutputPayload, null, 2),
+  );
+  const [inputManualOverride, setInputManualOverride] = useState(props.mode === "edit");
+  const [outputManualOverride, setOutputManualOverride] = useState(props.mode === "edit");
+  const { pushToast } = useToast();
+
+  useActionFeedbackToast(state, {
+    errorTitle:
+      props.mode === "create"
+        ? "No fue posible guardar el dataset example"
+        : "No fue posible actualizar el dataset example",
+    successTitle:
+      props.mode === "create" ? "Dataset example guardado" : "Dataset example actualizado",
+  });
 
   const initialSelectedSpec =
-    datasetSpecs.find((spec) => spec.id === initialDatasetSpecId) ?? datasetSpecs[0] ?? null;
+    props.datasetSpecs.find((spec) => spec.id === props.initialDatasetSpecId) ?? props.datasetSpecs[0] ?? null;
   const [mappings, setMappings] = useState<DatasetFieldMappingRecord[]>(() =>
     initialSelectedSpec
       ? hydrateMappingsFromStored({
           inputSchema: initialSelectedSpec.inputSchema,
           outputSchema: initialSelectedSpec.outputSchema,
-          storedMappings: initialMappings,
+          storedMappings: props.initialMappings,
         })
       : [],
   );
-  const [inputPayloadText, setInputPayloadText] = useState(
-    JSON.stringify(initialInputPayload, null, 2),
-  );
-  const [outputPayloadText, setOutputPayloadText] = useState(
-    JSON.stringify(initialOutputPayload, null, 2),
-  );
-  const [inputManualOverride, setInputManualOverride] = useState(mode === "edit");
-  const [outputManualOverride, setOutputManualOverride] = useState(mode === "edit");
-
-  useActionFeedbackToast(state, {
-    errorTitle: mode === "create" ? "No fue posible guardar el dataset example" : "No fue posible actualizar el dataset example",
-    successTitle: mode === "create" ? "Dataset example guardado" : "Dataset example actualizado",
-  });
 
   const selectedSpec =
-    datasetSpecs.find((spec) => spec.id === datasetSpecId) ?? datasetSpecs[0] ?? null;
+    props.datasetSpecs.find((spec) => spec.id === datasetSpecId) ?? props.datasetSpecs[0] ?? null;
   const liveSourceSlice = {
-    ...sourceSlice,
+    ...props.sourceSlice,
     title: sourceTitle,
     sourceSummary,
   };
@@ -141,14 +181,99 @@ export function DatasetExampleEditor({
   const effectiveOutputPayloadText = outputManualOverride
     ? outputPayloadText
     : JSON.stringify(computedOutputPayload, null, 2);
+  const sessionNotes = liveSourceSlice.sourceMetadata.session_notes ?? "";
 
-  const previewFor = (mapping: DatasetFieldMappingRecord) =>
-    resolveFieldMapping(liveSourceSlice, mapping);
-
-  const renderRows = (
+  const updateMapping = (
     side: "input" | "output",
-    schema: DatasetSpecOption["inputSchema"],
-  ) =>
+    fieldKey: string,
+    updater: (mapping: DatasetFieldMappingRecord) => DatasetFieldMappingRecord,
+  ) => {
+    setMappings((current) =>
+      current.map((item) =>
+        item.side === side && item.fieldKey === fieldKey ? updater(item) : item,
+      ),
+    );
+  };
+
+  async function handleGenerateField(
+    side: "input" | "output",
+    field: DatasetSchemaField,
+    mapping: DatasetFieldMappingRecord,
+  ) {
+    if (!selectedSpec) {
+      return;
+    }
+
+    if (!mapping.llmConfigurationId.trim()) {
+      pushToast({
+        title: "Falta configuración LLM",
+        description: "Selecciona una configuración global antes de generar este campo.",
+        variant: "error",
+        durationMs: 7000,
+      });
+      return;
+    }
+
+    if (!mapping.llmPromptText.trim()) {
+      pushToast({
+        title: "Falta instrucción",
+        description: "Escribe una instrucción específica para este campo antes de generar.",
+        variant: "error",
+        durationMs: 7000,
+      });
+      return;
+    }
+
+    const currentFieldKey = `${side}:${field.key}`;
+    setGeneratingFieldKey(currentFieldKey);
+
+    try {
+      const result = await generateDatasetFieldWithLlm({
+        llmConfigurationId: mapping.llmConfigurationId,
+        side,
+        field,
+        datasetSpecName: selectedSpec.name,
+        datasetSpecSlug: selectedSpec.slug,
+        datasetSpecDescription: selectedSpec.description,
+        promptText: mapping.llmPromptText,
+        lastUserMessage: liveSourceSlice.lastUserMessage,
+        sourceSummary: liveSourceSlice.sourceSummary,
+        sessionNotes,
+        conversationSliceJson: JSON.stringify(liveSourceSlice.conversationSlice, null, 2),
+        surroundingContextJson: JSON.stringify(liveSourceSlice.surroundingContext, null, 2),
+        inputPayloadJson: JSON.stringify(computedInputPayload, null, 2),
+        outputPayloadJson: JSON.stringify(computedOutputPayload, null, 2),
+      });
+
+      if (!result.ok) {
+        pushToast({
+          title: "No fue posible generar el campo",
+          description: result.error,
+          variant: "error",
+          durationMs: 7000,
+        });
+        return;
+      }
+
+      updateMapping(side, field.key, (current) => ({
+        ...current,
+        sourceKey: "llm_generated",
+        llmGeneratedValueText: result.valueText,
+        llmGenerationMeta: result.metadata,
+      }));
+
+      pushToast({
+        title: "Campo generado",
+        description: `${field.key} ya tiene un valor generado con la configuración seleccionada.`,
+        variant: "success",
+        durationMs: 5000,
+      });
+    } finally {
+      setGeneratingFieldKey(null);
+    }
+  }
+
+  const renderRows = (side: "input" | "output", schema: DatasetSpecOption["inputSchema"]) =>
     schema.map((field) => {
       const mapping =
         mappings.find((item) => item.side === side && item.fieldKey === field.key) ?? null;
@@ -157,17 +282,26 @@ export function DatasetExampleEditor({
         return null;
       }
 
-      const preview = previewFor(mapping);
+      const preview = resolveFieldMapping(liveSourceSlice, mapping);
+      const currentFieldKey = `${side}:${field.key}`;
+      const isGenerating = generatingFieldKey === currentFieldKey;
+      const generationMeta = asRecord(mapping.llmGenerationMeta);
+      const generatedAt = formatDateTime(
+        typeof generationMeta?.generatedAt === "string" ? generationMeta.generatedAt : undefined,
+      );
 
       return (
         <article
-          key={`${side}:${field.key}`}
-          className="grid gap-4 rounded-[1.5rem] border border-[var(--line)] bg-white/70 p-4 xl:grid-cols-[minmax(0,1fr)_220px_220px]"
+          key={currentFieldKey}
+          className="grid gap-4 rounded-[1.5rem] border border-[var(--line)] bg-white/70 p-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(0,0.95fr)_220px]"
         >
           <div className="space-y-3">
             <div className="flex flex-wrap items-center gap-2">
               <p className="text-base font-semibold text-[var(--foreground)]">{field.key}</p>
               <StatusBadge status={field.required ? "approved" : "draft"} />
+              <span className="rounded-full border border-[var(--line)] px-3 py-1 text-xs text-[var(--muted)]">
+                {side}
+              </span>
               <span className="rounded-full border border-[var(--line)] px-3 py-1 text-xs text-[var(--muted)]">
                 {field.type}
               </span>
@@ -177,103 +311,275 @@ export function DatasetExampleEditor({
             </p>
 
             <label className="block space-y-2">
-              <FormLabel>Fuente</FormLabel>
+              <FormLabel>Fuente de verdad</FormLabel>
               <select
                 className="field"
                 value={mapping.sourceKey}
                 onChange={(event) => {
                   const nextValue = event.target.value as DatasetFieldMappingRecord["sourceKey"];
-                  setMappings((current) =>
-                    current.map((item) =>
-                      item.side === side && item.fieldKey === field.key
-                        ? { ...item, sourceKey: nextValue }
-                        : item,
-                    ),
-                  );
+                  updateMapping(side, field.key, (current) => ({
+                    ...current,
+                    sourceKey: nextValue,
+                  }));
                 }}
               >
-                <option value="source.last_user_message">source.last_user_message</option>
-                <option value="source.conversation_slice">source.conversation_slice</option>
-                <option value="source.surrounding_context">source.surrounding_context</option>
-                <option value="source.source_summary">source.source_summary</option>
-                <option value="source.session_notes">source.session_notes</option>
-                <option value="manual">manual</option>
-                <option value="constant">constant</option>
+                <option value="source.last_user_message">Mapear: último mensaje del usuario</option>
+                <option value="source.conversation_slice">Mapear: transcript seleccionado</option>
+                <option value="source.surrounding_context">Mapear: contexto cercano</option>
+                <option value="source.source_summary">Mapear: resumen curatorial</option>
+                <option value="source.session_notes">Mapear: notas de sesión</option>
+                <option value="llm_generated">Generar con LLM</option>
+                <option value="manual">Texto manual</option>
+                <option value="constant">Valor constante</option>
               </select>
             </label>
 
-            <div className="grid gap-3 md:grid-cols-2">
+            {isDirectSource(mapping.sourceKey) ? (
+              <div className="grid gap-3 md:grid-cols-2">
+                <label className="block space-y-2">
+                  <FormLabel>Path</FormLabel>
+                  <input
+                    className="field"
+                    value={mapping.sourcePath}
+                    onChange={(event) => {
+                      const nextValue = event.target.value;
+                      updateMapping(side, field.key, (current) => ({
+                        ...current,
+                        sourcePath: nextValue,
+                      }));
+                    }}
+                    placeholder="0.text o metadata.answer"
+                  />
+                </label>
+
+                <label className="block space-y-2">
+                  <FormLabel>Transforms</FormLabel>
+                  <input
+                    className="field"
+                    value={serializeTransformChain(mapping.transformChain)}
+                    onChange={(event) => {
+                      const nextValue = parseTransformChainText(event.target.value);
+                      updateMapping(side, field.key, (current) => ({
+                        ...current,
+                        transformChain: nextValue,
+                      }));
+                    }}
+                    placeholder="trim | join_lines | pick_path:0.text"
+                  />
+                </label>
+              </div>
+            ) : null}
+
+            {mapping.sourceKey === "manual" || mapping.sourceKey === "constant" ? (
               <label className="block space-y-2">
-                <FormLabel>Path</FormLabel>
-                <input
-                  className="field"
-                  value={mapping.sourcePath}
+                <FormLabel>{mapping.sourceKey === "constant" ? "Valor constante" : "Texto manual"}</FormLabel>
+                <textarea
+                  className="field min-h-36 font-mono text-xs"
+                  value={mapping.sourceKey === "constant" ? mapping.constantValueText : mapping.manualValueText}
                   onChange={(event) => {
                     const nextValue = event.target.value;
-                    setMappings((current) =>
-                      current.map((item) =>
-                        item.side === side && item.fieldKey === field.key
-                          ? { ...item, sourcePath: nextValue }
-                          : item,
-                      ),
+                    updateMapping(side, field.key, (current) =>
+                      mapping.sourceKey === "constant"
+                        ? { ...current, constantValueText: nextValue }
+                        : { ...current, manualValueText: nextValue },
                     );
                   }}
-                  placeholder="0.text o metadata.answer"
+                  placeholder={
+                    mapping.sourceKey === "constant"
+                      ? '"valor fijo" o {"clave":"valor"}'
+                      : "Escribe aquí el valor final de este campo."
+                  }
                 />
               </label>
+            ) : null}
 
-              <label className="block space-y-2">
-                <FormLabel>Transforms</FormLabel>
-                <input
-                  className="field"
-                  value={serializeTransformChain(mapping.transformChain)}
-                  onChange={(event) => {
-                    const nextValue = parseTransformChainText(event.target.value);
-                    setMappings((current) =>
-                      current.map((item) =>
-                        item.side === side && item.fieldKey === field.key
-                          ? { ...item, transformChain: nextValue }
-                          : item,
-                      ),
-                    );
-                  }}
-                  placeholder="trim | join_lines | pick_path:0.text"
-                />
-              </label>
-            </div>
+            {mapping.sourceKey === "llm_generated" ? (
+              <div className="space-y-4 rounded-[1.25rem] border border-[var(--line)] bg-[rgba(15,95,92,0.04)] p-4">
+                <div className="grid gap-3 md:grid-cols-2">
+                  <label className="block space-y-2">
+                    <FormLabel>Configuración global LLM</FormLabel>
+                    <select
+                      className="field"
+                      value={mapping.llmConfigurationId}
+                      onChange={(event) => {
+                        const nextValue = event.target.value;
+                        updateMapping(side, field.key, (current) => ({
+                          ...current,
+                          llmConfigurationId: nextValue,
+                        }));
+                      }}
+                    >
+                      <option value="">Selecciona una configuración</option>
+                      {props.llmConfigurations.map((configuration) => (
+                        <option key={configuration.id} value={configuration.id}>
+                          {configuration.name} · {configuration.chatModel}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <div className="rounded-[1rem] border border-[var(--line)] bg-white/75 px-4 py-3 text-sm text-[var(--muted)]">
+                    <p className="font-semibold text-[var(--foreground)]">Contexto enviado al modelo</p>
+                    <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                      <span className="rounded-full border border-[var(--line)] px-3 py-1">último mensaje</span>
+                      <span className="rounded-full border border-[var(--line)] px-3 py-1">resumen</span>
+                      <span className="rounded-full border border-[var(--line)] px-3 py-1">notas de sesión</span>
+                      <span className="rounded-full border border-[var(--line)] px-3 py-1">transcript</span>
+                      <span className="rounded-full border border-[var(--line)] px-3 py-1">payload actual</span>
+                    </div>
+                  </div>
+                </div>
+
+                <label className="block space-y-2">
+                  <FormLabel>Instrucción para este campo</FormLabel>
+                  <textarea
+                    className="field min-h-28"
+                    value={mapping.llmPromptText}
+                    onChange={(event) => {
+                      const nextValue = event.target.value;
+                      updateMapping(side, field.key, (current) => ({
+                        ...current,
+                        llmPromptText: nextValue,
+                      }));
+                    }}
+                    placeholder="Resume los hechos clave y devuelve solo el valor útil para este campo."
+                  />
+                </label>
+
+                <label className="block space-y-2">
+                  <FormLabel>Resultado generado</FormLabel>
+                  <textarea
+                    className="field min-h-36 font-mono text-xs"
+                    value={mapping.llmGeneratedValueText}
+                    onChange={(event) => {
+                      const nextValue = event.target.value;
+                      updateMapping(side, field.key, (current) => ({
+                        ...current,
+                        llmGeneratedValueText: nextValue,
+                      }));
+                    }}
+                    placeholder="Aquí aparecerá el resultado generado por el modelo."
+                  />
+                </label>
+
+                <div className="flex flex-wrap items-center gap-3">
+                  <button
+                    type="button"
+                    className="button-primary"
+                    onClick={() => handleGenerateField(side, field, mapping)}
+                    disabled={isGenerating || props.llmConfigurations.length === 0}
+                  >
+                    {isGenerating
+                      ? "Generando..."
+                      : mapping.llmGeneratedValueText.trim()
+                        ? "Regenerar"
+                        : "Generar"}
+                  </button>
+                  <button
+                    type="button"
+                    className="button-secondary"
+                    onClick={() => {
+                      updateMapping(side, field.key, (current) => ({
+                        ...current,
+                        llmGeneratedValueText: "",
+                        llmGenerationMeta: undefined,
+                      }));
+                    }}
+                    disabled={isGenerating}
+                  >
+                    Limpiar resultado
+                  </button>
+                </div>
+
+                {generationMeta ? (
+                  <div className="rounded-[1rem] border border-[var(--line)] bg-white/75 px-4 py-3 text-sm text-[var(--muted)]">
+                    <p className="font-semibold text-[var(--foreground)]">Proveniencia LLM</p>
+                    <div className="mt-2 space-y-1">
+                      <p>
+                        Configuración: {typeof generationMeta.configurationName === "string" ? generationMeta.configurationName : "Sin nombre"}
+                      </p>
+                      <p>
+                        Modelo: {typeof generationMeta.model === "string" ? generationMeta.model : "No disponible"}
+                      </p>
+                      {generatedAt ? <p>Generado: {generatedAt}</p> : null}
+                      {typeof generationMeta.confidence === "number" ? (
+                        <p>Confianza estimada: {Math.round(generationMeta.confidence * 100)}%</p>
+                      ) : null}
+                      {typeof generationMeta.notes === "string" && generationMeta.notes.trim() ? (
+                        <p>Notas: {generationMeta.notes}</p>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : null}
+
+                <div className="grid gap-3 md:grid-cols-2">
+                  <label className="block space-y-2">
+                    <FormLabel>Path post-generación</FormLabel>
+                    <input
+                      className="field"
+                      value={mapping.sourcePath}
+                      onChange={(event) => {
+                        const nextValue = event.target.value;
+                        updateMapping(side, field.key, (current) => ({
+                          ...current,
+                          sourcePath: nextValue,
+                        }));
+                      }}
+                      placeholder="value.text o 0.answer"
+                    />
+                  </label>
+
+                  <label className="block space-y-2">
+                    <FormLabel>Transforms</FormLabel>
+                    <input
+                      className="field"
+                      value={serializeTransformChain(mapping.transformChain)}
+                      onChange={(event) => {
+                        const nextValue = parseTransformChainText(event.target.value);
+                        updateMapping(side, field.key, (current) => ({
+                          ...current,
+                          transformChain: nextValue,
+                        }));
+                      }}
+                      placeholder="trim | pick_path:value"
+                    />
+                  </label>
+                </div>
+              </div>
+            ) : null}
           </div>
 
           <div className="space-y-3">
-            <label className="block space-y-2">
-              <FormLabel>{mapping.sourceKey === "constant" ? "Valor constante" : "Override manual"}</FormLabel>
-              <textarea
-                className="field min-h-36 font-mono text-xs"
-                value={mapping.sourceKey === "constant" ? mapping.constantValueText : mapping.manualValueText}
-                onChange={(event) => {
-                  const nextValue = event.target.value;
-                  setMappings((current) =>
-                    current.map((item) =>
-                      item.side === side && item.fieldKey === field.key
-                        ? mapping.sourceKey === "constant"
-                          ? { ...item, constantValueText: nextValue }
-                          : { ...item, manualValueText: nextValue }
-                        : item,
-                    ),
-                  );
-                }}
-                placeholder={
-                  mapping.sourceKey === "constant"
-                    ? '"valor fijo" o {"clave":"valor"}'
-                    : "Escribe aquí si quieres resolver el campo a mano."
-                }
-              />
-            </label>
+            <div className="rounded-[1.25rem] border border-[var(--line)] bg-white/75 p-4">
+              <p className="text-sm font-semibold text-[var(--foreground)]">Estado del campo</p>
+              <div className="mt-3 space-y-2 text-sm text-[var(--muted)]">
+                <p>
+                  Resolución actual: <span className="font-medium text-[var(--foreground)]">{mapping.sourceKey}</span>
+                </p>
+                {mapping.sourceKey === "llm_generated" && mapping.llmGeneratedValueText.trim() ? (
+                  <p>Resultado LLM listo para persistir o ajustar.</p>
+                ) : null}
+                {mapping.sourceKey === "manual" && mapping.manualValueText.trim() ? (
+                  <p>Valor manual presente.</p>
+                ) : null}
+                {mapping.sourceKey === "constant" && mapping.constantValueText.trim() ? (
+                  <p>Valor constante configurado.</p>
+                ) : null}
+              </div>
+            </div>
+
+            <div className="rounded-[1.25rem] border border-[var(--line)] bg-white/75 p-4">
+              <p className="text-sm font-semibold text-[var(--foreground)]">Último mensaje del usuario</p>
+              <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-[var(--muted)]">
+                {liveSourceSlice.lastUserMessage || "Sin mensaje de usuario detectado."}
+              </p>
+            </div>
           </div>
 
           <div className="space-y-2">
             <FormLabel>Preview</FormLabel>
             <pre className="min-h-36 overflow-x-auto rounded-[1rem] border border-[var(--line)] bg-[rgba(15,23,42,0.04)] p-3 text-xs leading-6 text-[var(--muted-strong)]">
-              {preview === undefined ? "Sin resolver todavía" : prettyJson(preview)}
+              {prettyJson(preview)}
             </pre>
           </div>
         </article>
@@ -296,10 +602,10 @@ export function DatasetExampleEditor({
           <div>
             <p className="text-sm uppercase tracking-[0.22em] text-[var(--muted)]">Fuente</p>
             <h1 className="mt-3 text-3xl font-semibold tracking-tight">
-              {mode === "create" ? "Nuevo editor DSPy" : title || "Editar dataset example"}
+              {props.mode === "create" ? "Nuevo editor DSPy" : title || "Editar dataset example"}
             </h1>
             <p className="mt-3 max-w-3xl text-sm leading-7 text-[var(--muted)]">
-              Revisa el slice seleccionado, ajusta el resumen curatorial y define la firma final casi directamente desde el chat.
+              Revisa el slice seleccionado, ajusta el resumen curatorial y define la firma final campo por campo con mapeo directo, texto manual o generación asistida por LLM.
             </p>
           </div>
 
@@ -350,7 +656,7 @@ export function DatasetExampleEditor({
             <div className="rounded-[1.5rem] border border-[var(--line)] bg-white/70 p-4">
               <p className="text-sm font-semibold text-[var(--foreground)]">Transcript seleccionado</p>
               <div className="mt-4 space-y-3">
-                {sourceSlice.conversationSlice.map((message) => (
+                {props.sourceSlice.conversationSlice.map((message) => (
                   <article
                     key={message.id}
                     className="rounded-[1.25rem] border border-[var(--line)] bg-[rgba(15,23,42,0.03)] p-4"
@@ -377,16 +683,16 @@ export function DatasetExampleEditor({
                 onChange={(event) => {
                   const nextDatasetSpecId = event.target.value;
                   const nextSpec =
-                    datasetSpecs.find((spec) => spec.id === nextDatasetSpecId) ?? null;
+                    props.datasetSpecs.find((spec) => spec.id === nextDatasetSpecId) ?? null;
 
                   setDatasetSpecId(nextDatasetSpecId);
                   setMappings(
                     nextSpec
-                      ? nextSpec.id === initialDatasetSpecId && initialMappings?.length
+                      ? nextSpec.id === props.initialDatasetSpecId && props.initialMappings?.length
                         ? hydrateMappingsFromStored({
                             inputSchema: nextSpec.inputSchema,
                             outputSchema: nextSpec.outputSchema,
-                            storedMappings: initialMappings,
+                            storedMappings: props.initialMappings,
                           })
                         : [
                             ...buildDefaultMappings(nextSpec.inputSchema, "input"),
@@ -398,7 +704,7 @@ export function DatasetExampleEditor({
                   setOutputManualOverride(false);
                 }}
               >
-                {datasetSpecs.map((spec) => (
+                {props.datasetSpecs.map((spec) => (
                   <option key={spec.id} value={spec.id}>
                     {spec.name} ({spec.slug})
                   </option>
@@ -424,24 +730,39 @@ export function DatasetExampleEditor({
             </label>
 
             <div className="rounded-[1.5rem] border border-[var(--line)] bg-white/70 p-4">
+              <p className="text-sm font-semibold text-[var(--foreground)]">Configuraciones LLM globales</p>
+              <div className="mt-3 space-y-2 text-sm text-[var(--muted)]">
+                {props.llmConfigurations.length === 0 ? (
+                  <p>No hay configuraciones LLM globales guardadas todavía.</p>
+                ) : (
+                  props.llmConfigurations.slice(0, 4).map((configuration) => (
+                    <p key={configuration.id}>
+                      {configuration.name} · {configuration.chatModel}
+                    </p>
+                  ))
+                )}
+              </div>
+            </div>
+
+            <div className="rounded-[1.5rem] border border-[var(--line)] bg-white/70 p-4">
               <p className="text-sm font-semibold text-[var(--foreground)]">Contexto auxiliar</p>
               <pre className="mt-3 max-h-72 overflow-auto rounded-[1rem] bg-[rgba(15,23,42,0.04)] p-3 text-xs leading-6 text-[var(--muted-strong)]">
-                {sourceSlice.surroundingContext.length === 0
+                {props.sourceSlice.surroundingContext.length === 0
                   ? "Sin contexto adicional cercano."
-                  : JSON.stringify(sourceSlice.surroundingContext, null, 2)}
+                  : JSON.stringify(props.sourceSlice.surroundingContext, null, 2)}
               </pre>
             </div>
 
             <div className="rounded-[1.5rem] border border-[var(--line)] bg-white/70 p-4">
               <p className="text-sm font-semibold text-[var(--foreground)]">Última validación guardada</p>
               <div className="mt-3 space-y-2 text-sm text-[var(--muted)]">
-                <p>{initialValidationState?.shapeMatches ? "Shape válido" : "Todavía no validado"}</p>
-                {(initialValidationState?.structuralErrors ?? []).map((error) => (
+                <p>{props.initialValidationState?.shapeMatches ? "Shape válido" : "Todavía no validado"}</p>
+                {(props.initialValidationState?.structuralErrors ?? []).map((error) => (
                   <p key={error} className="text-rose-700">
                     {error}
                   </p>
                 ))}
-                {(initialValidationState?.semanticWarnings ?? []).map((warning) => (
+                {(props.initialValidationState?.semanticWarnings ?? []).map((warning) => (
                   <p key={warning} className="text-amber-700">
                     {warning}
                   </p>
@@ -458,8 +779,11 @@ export function DatasetExampleEditor({
             <div>
               <p className="text-sm uppercase tracking-[0.22em] text-[var(--muted)]">Mapeo</p>
               <h2 className="mt-2 text-2xl font-semibold tracking-tight">
-                Selecciona la fuente y ajusta la transformación por campo.
+                Selecciona la fuente y ajusta la resolución por campo.
               </h2>
+              <p className="mt-2 text-sm text-[var(--muted)]">
+                Cada campo puede salir de una fuente del slice, texto manual o una generación puntual con LLM global.
+              </p>
             </div>
           </div>
 
@@ -497,18 +821,10 @@ export function DatasetExampleEditor({
           </div>
 
           <div className="flex flex-wrap gap-3">
-            <button
-              type="button"
-              className="button-secondary"
-              onClick={() => setInputManualOverride(false)}
-            >
+            <button type="button" className="button-secondary" onClick={() => setInputManualOverride(false)}>
               Reset input desde mapping
             </button>
-            <button
-              type="button"
-              className="button-secondary"
-              onClick={() => setOutputManualOverride(false)}
-            >
+            <button type="button" className="button-secondary" onClick={() => setOutputManualOverride(false)}>
               Reset output desde mapping
             </button>
           </div>
@@ -544,9 +860,9 @@ export function DatasetExampleEditor({
           <FormSubmitButton
             type="submit"
             className="button-primary"
-            pendingLabel={mode === "create" ? "Guardando example..." : "Actualizando example..."}
+            pendingLabel={props.mode === "create" ? "Guardando example..." : "Actualizando example..."}
           >
-            {mode === "create" ? "Guardar dataset example" : "Actualizar dataset example"}
+            {props.mode === "create" ? "Guardar dataset example" : "Actualizar dataset example"}
           </FormSubmitButton>
           <span className="text-sm text-[var(--muted)]">
             El guardado valida estructura y persiste el mapping junto con los payloads finales.

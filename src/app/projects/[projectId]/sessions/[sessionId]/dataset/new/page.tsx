@@ -32,7 +32,7 @@ export default async function NewDatasetExamplePage({
 
   await ensureDefaultDatasetSpecs();
 
-  const [session, selectedMessages, contextMessages, datasetSpecs, lastUsedDatasetExample] =
+  const [session, selectedMessages, contextMessages, datasetSpecs, lastUsedDatasetExample, llmConfigurations] =
     await Promise.all([
       prisma.session.findUnique({
         where: { id: sessionId },
@@ -73,6 +73,15 @@ export default async function NewDatasetExamplePage({
         },
         select: {
           datasetSpecId: true,
+        },
+      }),
+      prisma.llmConfiguration.findMany({
+        orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
+        select: {
+          id: true,
+          name: true,
+          chatModel: true,
+          updatedAt: true,
         },
       }),
     ]);
@@ -132,6 +141,12 @@ export default async function NewDatasetExamplePage({
         mode="create"
         sourceSlice={sourceSlice}
         datasetSpecs={datasetSpecs.map(datasetSpecFromPrisma)}
+        llmConfigurations={llmConfigurations.map((configuration) => ({
+          id: configuration.id,
+          name: configuration.name,
+          chatModel: configuration.chatModel,
+          updatedAt: configuration.updatedAt.toISOString(),
+        }))}
         initialDatasetSpecId={selectedDatasetSpec?.id ?? ""}
         initialTitle=""
         initialReviewStatus="draft"

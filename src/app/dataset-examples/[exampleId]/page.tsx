@@ -19,7 +19,7 @@ export default async function DatasetExampleDetailPage({
 
   await ensureDefaultDatasetSpecs();
 
-  const [datasetExample, datasetSpecs] = await Promise.all([
+  const [datasetExample, datasetSpecs, llmConfigurations] = await Promise.all([
     prisma.datasetExample.findUnique({
       where: { id: exampleId },
       include: {
@@ -33,6 +33,15 @@ export default async function DatasetExampleDetailPage({
     prisma.datasetSpec.findMany({
       where: { isActive: true },
       orderBy: [{ updatedAt: "desc" }, { name: "asc" }],
+    }),
+    prisma.llmConfiguration.findMany({
+      orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
+      select: {
+        id: true,
+        name: true,
+        chatModel: true,
+        updatedAt: true,
+      },
     }),
   ]);
 
@@ -55,6 +64,12 @@ export default async function DatasetExampleDetailPage({
           mode="edit"
           sourceSlice={sourceSlice}
           datasetSpecs={datasetSpecs.map(datasetSpecFromPrisma)}
+          llmConfigurations={llmConfigurations.map((configuration) => ({
+            id: configuration.id,
+            name: configuration.name,
+            chatModel: configuration.chatModel,
+            updatedAt: configuration.updatedAt.toISOString(),
+          }))}
           initialDatasetSpecId={datasetExample.datasetSpecId}
           initialTitle={datasetExample.title ?? ""}
           initialReviewStatus={datasetExample.reviewStatus}
@@ -68,6 +83,10 @@ export default async function DatasetExampleDetailPage({
             transformChainJson: mapping.transformChainJson as JsonValue,
             constantValueJson: mapping.constantValueJson as JsonValue | null,
             manualValueJson: mapping.manualValueJson as JsonValue | null,
+            llmConfigurationId: mapping.llmConfigurationId,
+            llmPromptText: mapping.llmPromptText,
+            llmGeneratedValueJson: mapping.llmGeneratedValueJson as JsonValue | null,
+            llmGenerationMetaJson: mapping.llmGenerationMetaJson as JsonValue | null,
             resolvedPreviewJson: mapping.resolvedPreviewJson as JsonValue | null,
           }))}
           initialValidationState={parseValidationState(datasetExample.validationStateJson as JsonValue)}

@@ -252,6 +252,7 @@ export const DATASET_MAPPING_SOURCES = [
   "source.surrounding_context",
   "source.source_summary",
   "source.session_notes",
+  "llm_generated",
   "manual",
   "constant",
 ] as const;
@@ -331,6 +332,10 @@ export type DatasetFieldMappingRecord = {
   transformChain: string[];
   constantValueText: string;
   manualValueText: string;
+  llmConfigurationId: string;
+  llmPromptText: string;
+  llmGeneratedValueText: string;
+  llmGenerationMeta?: JsonValue;
   resolvedPreview?: JsonValue;
 };
 

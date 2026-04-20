@@ -355,6 +355,10 @@ model DatasetFieldMapping {
   transformChainJson Json
   constantValueJson  Json?
   manualValueJson    Json?
+  llmConfigurationId String?
+  llmPromptText      String?
+  llmGeneratedValueJson Json?
+  llmGenerationMetaJson Json?
   resolvedPreviewJson Json?
   position           Int              @default(0)
   createdAt          DateTime         @default(now())

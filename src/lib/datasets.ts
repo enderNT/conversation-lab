@@ -202,6 +202,8 @@ function resolveSourceValue(
       return sourceSlice.sourceSummary;
     case "source.session_notes":
       return sourceMetadata.session_notes ?? "";
+    case "llm_generated":
+      return parseValueText(mapping.llmGeneratedValueText);
     case "constant":
       return parseValueText(mapping.constantValueText);
     case "manual":
@@ -658,7 +660,12 @@ function inferDefaultSource(field: DatasetSchemaField) {
 }
 
 function inferDefaultTransforms(field: DatasetSchemaField, sourceKey: DatasetFieldMappingRecord["sourceKey"]) {
-  if (field.type === "string" && sourceKey !== "manual" && sourceKey !== "constant") {
+  if (
+    field.type === "string" &&
+    sourceKey !== "manual" &&
+    sourceKey !== "constant" &&
+    sourceKey !== "llm_generated"
+  ) {
     return ["trim"];
   }
 
@@ -677,6 +684,9 @@ export function buildDefaultMappings(schema: DatasetSchemaField[], side: "input"
       transformChain: inferDefaultTransforms(field, sourceKey),
       constantValueText: "",
       manualValueText: "",
+      llmConfigurationId: "",
+      llmPromptText: "",
+      llmGeneratedValueText: "",
     };
   });
 }
@@ -692,6 +702,10 @@ export function hydrateMappingsFromStored(input: {
     transformChainJson: JsonValue;
     constantValueJson: JsonValue | null;
     manualValueJson: JsonValue | null;
+    llmConfigurationId?: string | null;
+    llmPromptText?: string | null;
+    llmGeneratedValueJson?: JsonValue | null;
+    llmGenerationMetaJson?: JsonValue | null;
     resolvedPreviewJson: JsonValue | null;
   }>;
 }) {
@@ -727,6 +741,10 @@ export function hydrateMappingsFromStored(input: {
         : [],
       constantValueText: stringifyJsonValue(stored.constantValueJson as JsonValue | undefined),
       manualValueText: stringifyJsonValue(stored.manualValueJson as JsonValue | undefined),
+      llmConfigurationId: stored.llmConfigurationId ?? "",
+      llmPromptText: stored.llmPromptText ?? "",
+      llmGeneratedValueText: stringifyJsonValue(stored.llmGeneratedValueJson as JsonValue | undefined),
+      llmGenerationMeta: (stored.llmGenerationMetaJson as JsonValue | undefined) ?? undefined,
       resolvedPreview: (stored.resolvedPreviewJson as JsonValue | undefined) ?? undefined,
     };
   });
