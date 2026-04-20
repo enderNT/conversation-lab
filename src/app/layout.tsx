@@ -1,7 +1,29 @@
 import type { Metadata } from "next";
+import { IBM_Plex_Sans, Newsreader, Space_Grotesk } from "next/font/google";
 import Script from "next/script";
 import { AppShell } from "@/components/app-shell";
 import "./globals.css";
+
+const bodyFont = IBM_Plex_Sans({
+  subsets: ["latin"],
+  weight: ["400", "500", "600"],
+  display: "swap",
+  variable: "--font-body-google",
+});
+
+const editorialFont = Newsreader({
+  subsets: ["latin"],
+  weight: ["400", "600", "700", "800"],
+  display: "swap",
+  variable: "--font-editorial-google",
+});
+
+const labelFont = Space_Grotesk({
+  subsets: ["latin"],
+  weight: ["400", "500", "600"],
+  display: "swap",
+  variable: "--font-label-google",
+});
 
 export const metadata: Metadata = {
   title: "Conversation Lab",
@@ -35,7 +57,7 @@ export default function RootLayout({
   return (
     <html
       lang="es"
-      className="h-full antialiased"
+      className={`${bodyFont.variable} ${editorialFont.variable} ${labelFont.variable} h-full antialiased`}
       suppressHydrationWarning
     >
       <body className="h-full">

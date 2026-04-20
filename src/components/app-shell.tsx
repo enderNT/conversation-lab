@@ -25,11 +25,15 @@ function isNavItemActive(pathname: string, href: string) {
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const isSessionChatRoute = /^\/projects\/[^/]+\/sessions\/[^/]+$/.test(pathname);
+  const isDatasetWorkbenchRoute =
+    /^\/projects\/[^/]+\/sessions\/[^/]+\/dataset\/new$/.test(pathname) ||
+    /^\/dataset-examples\/[^/]+$/.test(pathname);
+  const isImmersiveRoute = isSessionChatRoute || isDatasetWorkbenchRoute;
 
   return (
     <ToastProvider>
       <div className="flex h-dvh min-h-screen flex-col overflow-hidden bg-transparent text-foreground">
-        {isSessionChatRoute ? null : (
+        {isImmersiveRoute ? null : (
           <header className="theme-header sticky top-0 z-20 backdrop-blur-xl">
             <div className="mx-auto grid w-full max-w-[90rem] grid-cols-1 gap-4 px-4 py-4 sm:px-6 lg:grid-cols-[auto_minmax(0,1fr)_auto] lg:items-center lg:px-8">
               <div className="min-w-0">
@@ -72,7 +76,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <main
           className={cn(
             "flex min-h-0 flex-1 flex-col overflow-x-hidden",
-            isSessionChatRoute
+            isImmersiveRoute
               ? "w-full overflow-hidden px-0 py-0"
               : "mx-auto w-full max-w-[90rem] overflow-y-auto px-4 py-6 sm:px-6 sm:py-7 lg:px-8 lg:py-10",
           )}

@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createDatasetExampleWithFeedback } from "@/app/actions";
 import { DatasetExampleEditor } from "@/components/dataset-example-editor";
@@ -127,34 +126,25 @@ export default async function NewDatasetExamplePage({
     null;
 
   return (
-    <div className="space-y-8">
-      <section className="surface rounded-[1.75rem] p-5 sm:p-6">
-        <Link
-          href={`/projects/${projectId}/sessions/${sessionId}`}
-          className="text-sm text-[var(--muted)] underline underline-offset-4"
-        >
-          Volver al chat
-        </Link>
-      </section>
-
-      <DatasetExampleEditor
-        mode="create"
-        sourceSlice={sourceSlice}
-        datasetSpecs={datasetSpecs.map(datasetSpecFromPrisma)}
-        llmConfigurations={llmConfigurations.map((configuration) => ({
-          id: configuration.id,
-          name: configuration.name,
-          chatModel: configuration.chatModel,
-          updatedAt: configuration.updatedAt.toISOString(),
-        }))}
-        initialDatasetSpecId={selectedDatasetSpec?.id ?? ""}
-        initialTitle=""
-        initialReviewStatus="draft"
-        initialInputPayload={{}}
-        initialOutputPayload={{}}
-        initialValidationState={null}
-        action={createDatasetExampleWithFeedback.bind(null, projectId, sessionId, start, end)}
-      />
-    </div>
+    <DatasetExampleEditor
+      mode="create"
+      backHref={`/projects/${projectId}/sessions/${sessionId}`}
+      backLabel="Volver al chat"
+      sourceSlice={sourceSlice}
+      datasetSpecs={datasetSpecs.map(datasetSpecFromPrisma)}
+      llmConfigurations={llmConfigurations.map((configuration) => ({
+        id: configuration.id,
+        name: configuration.name,
+        chatModel: configuration.chatModel,
+        updatedAt: configuration.updatedAt.toISOString(),
+      }))}
+      initialDatasetSpecId={selectedDatasetSpec?.id ?? ""}
+      initialTitle=""
+      initialReviewStatus="draft"
+      initialInputPayload={{}}
+      initialOutputPayload={{}}
+      initialValidationState={null}
+      action={createDatasetExampleWithFeedback.bind(null, projectId, sessionId, start, end)}
+    />
   );
 }

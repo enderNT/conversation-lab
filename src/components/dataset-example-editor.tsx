@@ -1,8 +1,12 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import Link from "next/link";
+import { useActionState, useMemo, useState } from "react";
 import { generateDatasetFieldWithLlm } from "@/app/actions";
-import { EMPTY_ACTION_FORM_STATE, type ActionFormState } from "@/lib/form-state";
+import { FormLabel } from "@/components/form-label";
+import { FormSubmitButton } from "@/components/form-submit-button";
+import { useToast } from "@/components/toast-provider";
+import { useActionFeedbackToast } from "@/components/use-action-feedback-toast";
 import {
   buildDefaultMappings,
   buildPayloadFromMappings,
@@ -11,20 +15,17 @@ import {
   resolveFieldMapping,
   serializeTransformChain,
 } from "@/lib/datasets";
-import type {
-  DatasetFieldMappingRecord,
-  DatasetSchemaField,
-  DatasetValidationState,
-  JsonObject,
-  JsonValue,
-  SourceSliceRecord,
+import { EMPTY_ACTION_FORM_STATE, type ActionFormState } from "@/lib/form-state";
+import {
+  DATASET_EXAMPLE_STATUSES,
+  type DatasetFieldMappingRecord,
+  type DatasetMappingSourceKey,
+  type DatasetSchemaField,
+  type DatasetValidationState,
+  type JsonObject,
+  type JsonValue,
+  type SourceSliceRecord,
 } from "@/lib/types";
-import { DATASET_EXAMPLE_STATUSES } from "@/lib/types";
-import { FormLabel } from "@/components/form-label";
-import { FormSubmitButton } from "@/components/form-submit-button";
-import { StatusBadge } from "@/components/status-badge";
-import { useToast } from "@/components/toast-provider";
-import { useActionFeedbackToast } from "@/components/use-action-feedback-toast";
 
 type DatasetSpecOption = {
   id: string;
@@ -59,13 +60,20 @@ type StoredMapping = {
   resolvedPreviewJson: JsonValue | null;
 };
 
+type DatasetEditorMetadata = {
+  specSlug: string;
+  version: number;
+  sourceSliceId: string;
+  fieldMappingCount: number;
+};
+
 function serializeMappings(mappings: DatasetFieldMappingRecord[]) {
   return JSON.stringify(mappings, null, 2);
 }
 
 function prettyJson(value: JsonValue | undefined) {
   if (value === undefined) {
-    return "Sin resolver todavía";
+    return "Sin resolver todavia";
   }
 
   return typeof value === "string" ? value : JSON.stringify(value, null, 2);
@@ -100,8 +108,118 @@ function isDirectSource(sourceKey: DatasetFieldMappingRecord["sourceKey"]) {
   return sourceKey.startsWith("source.");
 }
 
+function isMeaningfulValue(value: JsonValue | undefined) {
+  if (value === undefined || value === null) {
+    return false;
+  }
+
+  if (typeof value === "string") {
+    return value.trim().length > 0;
+  }
+
+  if (typeof value === "number" || typeof value === "boolean") {
+    return true;
+  }
+
+  if (Array.isArray(value)) {
+    return value.length > 0;
+  }
+
+  return Object.keys(value).length > 0;
+}
+
+const SOURCE_LABELS: Record<DatasetMappingSourceKey, string> = {
+  "source.last_user_message": "Mapear desde fuente",
+  "source.conversation_slice": "Mapear transcript",
+  "source.surrounding_context": "Mapear contexto",
+  "source.source_summary": "Mapear resumen",
+  "source.session_notes": "Mapear notas",
+  llm_generated: "Generar con LLM",
+  manual: "Texto manual",
+  constant: "Valor constante",
+};
+
+const SOURCE_BADGES: Record<DatasetFieldMappingRecord["sourceKey"], string> = {
+  "source.last_user_message": "Transcript",
+  "source.conversation_slice": "Slice",
+  "source.surrounding_context": "Contexto",
+  "source.source_summary": "Resumen",
+  "source.session_notes": "Notas",
+  llm_generated: "LLM",
+  manual: "Manual",
+  constant: "Const",
+};
+
+function getSourceSnapshot(
+  sourceKey: DatasetFieldMappingRecord["sourceKey"],
+  sourceSlice: SourceSliceRecord,
+): JsonValue | undefined {
+  switch (sourceKey) {
+    case "source.last_user_message":
+      return sourceSlice.lastUserMessage;
+    case "source.conversation_slice":
+      return sourceSlice.conversationSlice.map((message) => ({
+        role: message.role,
+        text: message.text,
+      }));
+    case "source.surrounding_context":
+      return sourceSlice.surroundingContext.map((message) => ({
+        role: message.role,
+        text: message.text,
+      }));
+    case "source.source_summary":
+      return sourceSlice.sourceSummary;
+    case "source.session_notes":
+      return sourceSlice.sourceMetadata.session_notes ?? "";
+    default:
+      return undefined;
+  }
+}
+
+function renderBadge(text: string, tone: "neutral" | "accent" | "warm" = "neutral") {
+  return (
+    <span
+      className={[
+        "dataset-mapping-badge",
+        tone === "accent" ? "dataset-mapping-badge-accent" : "",
+        tone === "warm" ? "dataset-mapping-badge-warm" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
+    >
+      {text}
+    </span>
+  );
+}
+
+function getValidationTone(percent: number) {
+  if (percent >= 85) {
+    return "border-emerald-200 bg-emerald-50 text-emerald-900";
+  }
+
+  if (percent >= 60) {
+    return "border-amber-200 bg-amber-50 text-amber-900";
+  }
+
+  return "border-rose-200 bg-rose-50 text-rose-900";
+}
+
+function getCheckTone(kind: "ok" | "warn" | "error") {
+  if (kind === "ok") {
+    return "text-emerald-800";
+  }
+
+  if (kind === "warn") {
+    return "text-amber-800";
+  }
+
+  return "text-rose-800";
+}
+
 export function DatasetExampleEditor(props: {
   mode: "create" | "edit";
+  backHref: string;
+  backLabel: string;
   sourceSlice: SourceSliceRecord;
   datasetSpecs: DatasetSpecOption[];
   llmConfigurations: GlobalLlmConfigurationOption[];
@@ -112,6 +230,7 @@ export function DatasetExampleEditor(props: {
   initialOutputPayload: JsonObject;
   initialMappings?: StoredMapping[];
   initialValidationState?: DatasetValidationState | null;
+  metadata?: DatasetEditorMetadata;
   action: (state: ActionFormState, formData: FormData) => Promise<ActionFormState>;
 }) {
   const [state, formAction] = useActionState(props.action, EMPTY_ACTION_FORM_STATE);
@@ -129,6 +248,7 @@ export function DatasetExampleEditor(props: {
   );
   const [inputManualOverride, setInputManualOverride] = useState(props.mode === "edit");
   const [outputManualOverride, setOutputManualOverride] = useState(props.mode === "edit");
+  const [showSchema, setShowSchema] = useState(false);
   const { pushToast } = useToast();
 
   useActionFeedbackToast(state, {
@@ -141,7 +261,9 @@ export function DatasetExampleEditor(props: {
   });
 
   const initialSelectedSpec =
-    props.datasetSpecs.find((spec) => spec.id === props.initialDatasetSpecId) ?? props.datasetSpecs[0] ?? null;
+    props.datasetSpecs.find((spec) => spec.id === props.initialDatasetSpecId) ??
+    props.datasetSpecs[0] ??
+    null;
   const [mappings, setMappings] = useState<DatasetFieldMappingRecord[]>(() =>
     initialSelectedSpec
       ? hydrateMappingsFromStored({
@@ -183,6 +305,138 @@ export function DatasetExampleEditor(props: {
     : JSON.stringify(computedOutputPayload, null, 2);
   const sessionNotes = liveSourceSlice.sourceMetadata.session_notes ?? "";
 
+  const resolvedFieldCount = useMemo(() => {
+    if (!selectedSpec) {
+      return 0;
+    }
+
+    const fields = [
+      ...selectedSpec.inputSchema.map((field) => ({ side: "input" as const, field })),
+      ...selectedSpec.outputSchema.map((field) => ({ side: "output" as const, field })),
+    ];
+
+    return fields.reduce((count, item) => {
+      const mapping = mappings.find(
+        (current) => current.side === item.side && current.fieldKey === item.field.key,
+      );
+
+      if (!mapping) {
+        return count;
+      }
+
+      const preview = resolveFieldMapping(liveSourceSlice, mapping);
+      return count + (isMeaningfulValue(preview) ? 1 : 0);
+    }, 0);
+  }, [liveSourceSlice, mappings, selectedSpec]);
+
+  const totalFieldCount =
+    (selectedSpec?.inputSchema.length ?? 0) + (selectedSpec?.outputSchema.length ?? 0);
+  const readinessPercent =
+    totalFieldCount === 0 ? 0 : Math.round((resolvedFieldCount / totalFieldCount) * 100);
+  const structuralErrors = props.initialValidationState?.structuralErrors ?? [];
+  const semanticWarnings = props.initialValidationState?.semanticWarnings ?? [];
+  const validationChecks = [
+    {
+      label:
+        totalFieldCount === 0
+          ? "Sin campos definidos"
+          : `${resolvedFieldCount}/${totalFieldCount} campos resueltos`,
+      kind:
+        resolvedFieldCount === totalFieldCount
+          ? "ok"
+          : resolvedFieldCount > 0
+            ? "warn"
+            : "error",
+    },
+    {
+      label:
+        structuralErrors.length === 0
+          ? "Shape del payload sin errores estructurales"
+          : `${structuralErrors.length} errores estructurales detectados`,
+      kind: structuralErrors.length === 0 ? "ok" : "error",
+    },
+    {
+      label:
+        semanticWarnings.length === 0
+          ? "Sin warnings semanticos persistidos"
+          : `${semanticWarnings.length} warnings semanticos pendientes`,
+      kind: semanticWarnings.length === 0 ? "ok" : "warn",
+    },
+    {
+      label:
+        inputManualOverride || outputManualOverride
+          ? "Hay overrides manuales activos en JSON final"
+          : "JSON final derivado directamente desde mappings",
+      kind: inputManualOverride || outputManualOverride ? "warn" : "ok",
+    },
+  ] as const;
+
+  const renderSchemaSummary = () => {
+    if (!selectedSpec || !showSchema) {
+      return null;
+    }
+
+    return (
+      <div className="dataset-schema-sheet mt-5 grid gap-4 lg:grid-cols-2">
+        <section className="dataset-schema-column">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="dataset-mapping-eyebrow">Input schema</p>
+              <p className="text-sm text-[var(--muted)]">Campos de entrada de la firma.</p>
+            </div>
+            {renderBadge(`${selectedSpec.inputSchema.length} campos`, "accent")}
+          </div>
+          <div className="mt-4 space-y-3">
+            {selectedSpec.inputSchema.map((field) => (
+              <article key={`schema-input-${field.key}`} className="dataset-schema-row">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="font-semibold text-[var(--foreground)]">{field.key}</p>
+                  {renderBadge("input")}
+                  {renderBadge(
+                    field.required ? "required" : "optional",
+                    field.required ? "warm" : "neutral",
+                  )}
+                  {renderBadge(field.type)}
+                </div>
+                <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
+                  {field.description || "Sin descripcion."}
+                </p>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        <section className="dataset-schema-column">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="dataset-mapping-eyebrow">Output schema</p>
+              <p className="text-sm text-[var(--muted)]">Campos de salida esperados.</p>
+            </div>
+            {renderBadge(`${selectedSpec.outputSchema.length} campos`, "accent")}
+          </div>
+          <div className="mt-4 space-y-3">
+            {selectedSpec.outputSchema.map((field) => (
+              <article key={`schema-output-${field.key}`} className="dataset-schema-row">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="font-semibold text-[var(--foreground)]">{field.key}</p>
+                  {renderBadge("output")}
+                  {renderBadge(
+                    field.required ? "required" : "optional",
+                    field.required ? "warm" : "neutral",
+                  )}
+                  {renderBadge(field.type)}
+                </div>
+                <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
+                  {field.description || "Sin descripcion."}
+                </p>
+              </article>
+            ))}
+          </div>
+        </section>
+      </div>
+    );
+  };
+
   const updateMapping = (
     side: "input" | "output",
     fieldKey: string,
@@ -206,8 +460,8 @@ export function DatasetExampleEditor(props: {
 
     if (!mapping.llmConfigurationId.trim()) {
       pushToast({
-        title: "Falta configuración LLM",
-        description: "Selecciona una configuración global antes de generar este campo.",
+        title: "Falta configuracion LLM",
+        description: "Selecciona una configuracion global antes de generar este campo.",
         variant: "error",
         durationMs: 7000,
       });
@@ -216,8 +470,8 @@ export function DatasetExampleEditor(props: {
 
     if (!mapping.llmPromptText.trim()) {
       pushToast({
-        title: "Falta instrucción",
-        description: "Escribe una instrucción específica para este campo antes de generar.",
+        title: "Falta instruccion",
+        description: "Escribe una instruccion especifica para este campo antes de generar.",
         variant: "error",
         durationMs: 7000,
       });
@@ -264,7 +518,7 @@ export function DatasetExampleEditor(props: {
 
       pushToast({
         title: "Campo generado",
-        description: `${field.key} ya tiene un valor generado con la configuración seleccionada.`,
+        description: `${field.key} ya tiene un valor generado con la configuracion seleccionada.`,
         variant: "success",
         durationMs: 5000,
       });
@@ -289,31 +543,32 @@ export function DatasetExampleEditor(props: {
       const generatedAt = formatDateTime(
         typeof generationMeta?.generatedAt === "string" ? generationMeta.generatedAt : undefined,
       );
+      const sourceSnapshot = getSourceSnapshot(mapping.sourceKey, liveSourceSlice);
 
       return (
-        <article
-          key={currentFieldKey}
-          className="grid gap-4 rounded-[1.5rem] border border-[var(--line)] bg-white/70 p-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(0,0.95fr)_220px]"
-        >
-          <div className="space-y-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <p className="text-base font-semibold text-[var(--foreground)]">{field.key}</p>
-              <StatusBadge status={field.required ? "approved" : "draft"} />
-              <span className="rounded-full border border-[var(--line)] px-3 py-1 text-xs text-[var(--muted)]">
-                {side}
-              </span>
-              <span className="rounded-full border border-[var(--line)] px-3 py-1 text-xs text-[var(--muted)]">
-                {field.type}
-              </span>
+        <article key={currentFieldKey} className="dataset-mapping-card">
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-[1.05rem] font-semibold tracking-[-0.02em] text-[var(--foreground)]">
+                  {field.key}
+                </p>
+                {renderBadge(side === "input" ? "input" : "output", "accent")}
+                {renderBadge(
+                  field.required ? "required" : "optional",
+                  field.required ? "warm" : "neutral",
+                )}
+                {renderBadge(field.type)}
+              </div>
+              <p className="max-w-3xl text-sm leading-6 text-[var(--muted)]">
+                {field.description || "Sin descripcion."}
+              </p>
             </div>
-            <p className="text-sm leading-6 text-[var(--muted)]">
-              {field.description || "Sin descripción."}
-            </p>
 
-            <label className="block space-y-2">
-              <FormLabel>Fuente de verdad</FormLabel>
+            <label className="dataset-mapping-source-control lg:max-w-[20rem]">
+              <span className="dataset-mapping-control-label">Proveniencia</span>
               <select
-                className="field"
+                className="field dataset-mapping-select"
                 value={mapping.sourceKey}
                 onChange={(event) => {
                   const nextValue = event.target.value as DatasetFieldMappingRecord["sourceKey"];
@@ -323,271 +578,328 @@ export function DatasetExampleEditor(props: {
                   }));
                 }}
               >
-                <option value="source.last_user_message">Mapear: último mensaje del usuario</option>
+                <option value="source.last_user_message">Mapear: ultimo mensaje del usuario</option>
                 <option value="source.conversation_slice">Mapear: transcript seleccionado</option>
                 <option value="source.surrounding_context">Mapear: contexto cercano</option>
                 <option value="source.source_summary">Mapear: resumen curatorial</option>
-                <option value="source.session_notes">Mapear: notas de sesión</option>
+                <option value="source.session_notes">Mapear: notas de sesion</option>
                 <option value="llm_generated">Generar con LLM</option>
                 <option value="manual">Texto manual</option>
                 <option value="constant">Valor constante</option>
               </select>
             </label>
+          </div>
 
-            {isDirectSource(mapping.sourceKey) ? (
-              <div className="grid gap-3 md:grid-cols-2">
-                <label className="block space-y-2">
-                  <FormLabel>Path</FormLabel>
-                  <input
-                    className="field"
-                    value={mapping.sourcePath}
-                    onChange={(event) => {
-                      const nextValue = event.target.value;
-                      updateMapping(side, field.key, (current) => ({
-                        ...current,
-                        sourcePath: nextValue,
-                      }));
-                    }}
-                    placeholder="0.text o metadata.answer"
-                  />
-                </label>
+          <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
+            <div className="space-y-4">
+              {isDirectSource(mapping.sourceKey) ? (
+                <section className="dataset-mapping-surface">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {renderBadge(SOURCE_BADGES[mapping.sourceKey], "accent")}
+                    <span className="dataset-mapping-chip">{SOURCE_LABELS[mapping.sourceKey]}</span>
+                    {mapping.sourcePath.trim() ? (
+                      <span className="dataset-mapping-chip mono">{mapping.sourcePath}</span>
+                    ) : null}
+                  </div>
 
-                <label className="block space-y-2">
-                  <FormLabel>Transforms</FormLabel>
-                  <input
-                    className="field"
-                    value={serializeTransformChain(mapping.transformChain)}
-                    onChange={(event) => {
-                      const nextValue = parseTransformChainText(event.target.value);
-                      updateMapping(side, field.key, (current) => ({
-                        ...current,
-                        transformChain: nextValue,
-                      }));
-                    }}
-                    placeholder="trim | join_lines | pick_path:0.text"
-                  />
-                </label>
-              </div>
-            ) : null}
+                  <div className="mt-4 grid gap-3 md:grid-cols-2">
+                    <label className="block space-y-2">
+                      <FormLabel className="dataset-mapping-control-label">Path</FormLabel>
+                      <input
+                        className="field"
+                        value={mapping.sourcePath}
+                        onChange={(event) => {
+                          const nextValue = event.target.value;
+                          updateMapping(side, field.key, (current) => ({
+                            ...current,
+                            sourcePath: nextValue,
+                          }));
+                        }}
+                        placeholder="0.text o metadata.answer"
+                      />
+                    </label>
 
-            {mapping.sourceKey === "manual" || mapping.sourceKey === "constant" ? (
-              <label className="block space-y-2">
-                <FormLabel>{mapping.sourceKey === "constant" ? "Valor constante" : "Texto manual"}</FormLabel>
-                <textarea
-                  className="field min-h-36 font-mono text-xs"
-                  value={mapping.sourceKey === "constant" ? mapping.constantValueText : mapping.manualValueText}
-                  onChange={(event) => {
-                    const nextValue = event.target.value;
-                    updateMapping(side, field.key, (current) =>
-                      mapping.sourceKey === "constant"
-                        ? { ...current, constantValueText: nextValue }
-                        : { ...current, manualValueText: nextValue },
-                    );
-                  }}
-                  placeholder={
-                    mapping.sourceKey === "constant"
-                      ? '"valor fijo" o {"clave":"valor"}'
-                      : "Escribe aquí el valor final de este campo."
-                  }
-                />
-              </label>
-            ) : null}
+                    <label className="block space-y-2">
+                      <FormLabel className="dataset-mapping-control-label">Transforms</FormLabel>
+                      <input
+                        className="field"
+                        value={serializeTransformChain(mapping.transformChain)}
+                        onChange={(event) => {
+                          const nextValue = parseTransformChainText(event.target.value);
+                          updateMapping(side, field.key, (current) => ({
+                            ...current,
+                            transformChain: nextValue,
+                          }));
+                        }}
+                        placeholder="trim | join_lines | pick_path:0.text"
+                      />
+                    </label>
+                  </div>
 
-            {mapping.sourceKey === "llm_generated" ? (
-              <div className="space-y-4 rounded-[1.25rem] border border-[var(--line)] bg-[rgba(15,95,92,0.04)] p-4">
-                <div className="grid gap-3 md:grid-cols-2">
-                  <label className="block space-y-2">
-                    <FormLabel>Configuración global LLM</FormLabel>
-                    <select
-                      className="field"
-                      value={mapping.llmConfigurationId}
+                  <div className="dataset-mapping-quote mt-4">
+                    <p className="dataset-mapping-eyebrow">Vista de la fuente</p>
+                    <pre className="mt-3 whitespace-pre-wrap text-sm leading-7 text-[var(--muted-strong)]">
+                      {prettyJson(sourceSnapshot)}
+                    </pre>
+                  </div>
+                </section>
+              ) : null}
+
+              {mapping.sourceKey === "manual" || mapping.sourceKey === "constant" ? (
+                <section className="dataset-mapping-surface">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {renderBadge(SOURCE_BADGES[mapping.sourceKey], "accent")}
+                    <span className="dataset-mapping-chip">{SOURCE_LABELS[mapping.sourceKey]}</span>
+                  </div>
+                  <label className="mt-4 block space-y-2">
+                    <FormLabel className="dataset-mapping-control-label">
+                      {mapping.sourceKey === "constant" ? "Valor constante" : "Texto manual"}
+                    </FormLabel>
+                    <textarea
+                      className="field min-h-40 font-mono text-xs"
+                      value={
+                        mapping.sourceKey === "constant"
+                          ? mapping.constantValueText
+                          : mapping.manualValueText
+                      }
+                      onChange={(event) => {
+                        const nextValue = event.target.value;
+                        updateMapping(side, field.key, (current) =>
+                          mapping.sourceKey === "constant"
+                            ? { ...current, constantValueText: nextValue }
+                            : { ...current, manualValueText: nextValue },
+                        );
+                      }}
+                      placeholder={
+                        mapping.sourceKey === "constant"
+                          ? '"valor fijo" o {"clave":"valor"}'
+                          : "Escribe aqui el valor final de este campo."
+                      }
+                    />
+                  </label>
+                </section>
+              ) : null}
+
+              {mapping.sourceKey === "llm_generated" ? (
+                <section className="dataset-mapping-llm-surface">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <div className="dataset-mapping-llm-icon" aria-hidden="true">
+                        AI
+                      </div>
+                      <div>
+                        <p className="dataset-mapping-eyebrow">Configuracion global LLM</p>
+                        <p className="text-sm text-[var(--muted)]">
+                          Selecciona el modelo y define la instruccion especifica para este campo.
+                        </p>
+                      </div>
+                    </div>
+                    {renderBadge("LLM", "accent")}
+                  </div>
+
+                  <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_260px]">
+                    <label className="block space-y-2">
+                      <FormLabel className="dataset-mapping-control-label">
+                        Configuracion global LLM
+                      </FormLabel>
+                      <select
+                        className="field"
+                        value={mapping.llmConfigurationId}
+                        onChange={(event) => {
+                          const nextValue = event.target.value;
+                          updateMapping(side, field.key, (current) => ({
+                            ...current,
+                            llmConfigurationId: nextValue,
+                          }));
+                        }}
+                      >
+                        <option value="">Selecciona una configuracion</option>
+                        {props.llmConfigurations.map((configuration) => (
+                          <option key={configuration.id} value={configuration.id}>
+                            {configuration.name} · {configuration.chatModel}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <div className="dataset-mapping-mini-panel">
+                      <p className="dataset-mapping-eyebrow">Contexto enviado</p>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <span className="dataset-mapping-chip">ultimo mensaje</span>
+                        <span className="dataset-mapping-chip">resumen</span>
+                        <span className="dataset-mapping-chip">notas</span>
+                        <span className="dataset-mapping-chip">transcript</span>
+                        <span className="dataset-mapping-chip">payload actual</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <label className="mt-4 block space-y-2">
+                    <FormLabel className="dataset-mapping-control-label">
+                      Instruccion para este campo
+                    </FormLabel>
+                    <textarea
+                      className="field min-h-28"
+                      value={mapping.llmPromptText}
                       onChange={(event) => {
                         const nextValue = event.target.value;
                         updateMapping(side, field.key, (current) => ({
                           ...current,
-                          llmConfigurationId: nextValue,
+                          llmPromptText: nextValue,
                         }));
                       }}
+                      placeholder="Resume los hechos clave y devuelve solo el valor util para este campo."
+                    />
+                  </label>
+
+                  <label className="mt-4 block space-y-2">
+                    <FormLabel className="dataset-mapping-control-label">Resultado generado</FormLabel>
+                    <textarea
+                      className="field min-h-40 font-mono text-xs"
+                      value={mapping.llmGeneratedValueText}
+                      onChange={(event) => {
+                        const nextValue = event.target.value;
+                        updateMapping(side, field.key, (current) => ({
+                          ...current,
+                          llmGeneratedValueText: nextValue,
+                        }));
+                      }}
+                      placeholder="Aqui aparecera el resultado generado por el modelo."
+                    />
+                  </label>
+
+                  <div className="mt-4 flex flex-wrap items-center gap-3">
+                    <button
+                      type="button"
+                      className="button-primary"
+                      onClick={() => handleGenerateField(side, field, mapping)}
+                      disabled={isGenerating || props.llmConfigurations.length === 0}
                     >
-                      <option value="">Selecciona una configuración</option>
-                      {props.llmConfigurations.map((configuration) => (
-                        <option key={configuration.id} value={configuration.id}>
-                          {configuration.name} · {configuration.chatModel}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <div className="rounded-[1rem] border border-[var(--line)] bg-white/75 px-4 py-3 text-sm text-[var(--muted)]">
-                    <p className="font-semibold text-[var(--foreground)]">Contexto enviado al modelo</p>
-                    <div className="mt-2 flex flex-wrap gap-2 text-xs">
-                      <span className="rounded-full border border-[var(--line)] px-3 py-1">último mensaje</span>
-                      <span className="rounded-full border border-[var(--line)] px-3 py-1">resumen</span>
-                      <span className="rounded-full border border-[var(--line)] px-3 py-1">notas de sesión</span>
-                      <span className="rounded-full border border-[var(--line)] px-3 py-1">transcript</span>
-                      <span className="rounded-full border border-[var(--line)] px-3 py-1">payload actual</span>
-                    </div>
-                  </div>
-                </div>
-
-                <label className="block space-y-2">
-                  <FormLabel>Instrucción para este campo</FormLabel>
-                  <textarea
-                    className="field min-h-28"
-                    value={mapping.llmPromptText}
-                    onChange={(event) => {
-                      const nextValue = event.target.value;
-                      updateMapping(side, field.key, (current) => ({
-                        ...current,
-                        llmPromptText: nextValue,
-                      }));
-                    }}
-                    placeholder="Resume los hechos clave y devuelve solo el valor útil para este campo."
-                  />
-                </label>
-
-                <label className="block space-y-2">
-                  <FormLabel>Resultado generado</FormLabel>
-                  <textarea
-                    className="field min-h-36 font-mono text-xs"
-                    value={mapping.llmGeneratedValueText}
-                    onChange={(event) => {
-                      const nextValue = event.target.value;
-                      updateMapping(side, field.key, (current) => ({
-                        ...current,
-                        llmGeneratedValueText: nextValue,
-                      }));
-                    }}
-                    placeholder="Aquí aparecerá el resultado generado por el modelo."
-                  />
-                </label>
-
-                <div className="flex flex-wrap items-center gap-3">
-                  <button
-                    type="button"
-                    className="button-primary"
-                    onClick={() => handleGenerateField(side, field, mapping)}
-                    disabled={isGenerating || props.llmConfigurations.length === 0}
-                  >
-                    {isGenerating
-                      ? "Generando..."
-                      : mapping.llmGeneratedValueText.trim()
-                        ? "Regenerar"
-                        : "Generar"}
-                  </button>
-                  <button
-                    type="button"
-                    className="button-secondary"
-                    onClick={() => {
-                      updateMapping(side, field.key, (current) => ({
-                        ...current,
-                        llmGeneratedValueText: "",
-                        llmGenerationMeta: undefined,
-                      }));
-                    }}
-                    disabled={isGenerating}
-                  >
-                    Limpiar resultado
-                  </button>
-                </div>
-
-                {generationMeta ? (
-                  <div className="rounded-[1rem] border border-[var(--line)] bg-white/75 px-4 py-3 text-sm text-[var(--muted)]">
-                    <p className="font-semibold text-[var(--foreground)]">Proveniencia LLM</p>
-                    <div className="mt-2 space-y-1">
-                      <p>
-                        Configuración: {typeof generationMeta.configurationName === "string" ? generationMeta.configurationName : "Sin nombre"}
-                      </p>
-                      <p>
-                        Modelo: {typeof generationMeta.model === "string" ? generationMeta.model : "No disponible"}
-                      </p>
-                      {generatedAt ? <p>Generado: {generatedAt}</p> : null}
-                      {typeof generationMeta.confidence === "number" ? (
-                        <p>Confianza estimada: {Math.round(generationMeta.confidence * 100)}%</p>
-                      ) : null}
-                      {typeof generationMeta.notes === "string" && generationMeta.notes.trim() ? (
-                        <p>Notas: {generationMeta.notes}</p>
-                      ) : null}
-                    </div>
-                  </div>
-                ) : null}
-
-                <div className="grid gap-3 md:grid-cols-2">
-                  <label className="block space-y-2">
-                    <FormLabel>Path post-generación</FormLabel>
-                    <input
-                      className="field"
-                      value={mapping.sourcePath}
-                      onChange={(event) => {
-                        const nextValue = event.target.value;
+                      {isGenerating
+                        ? "Generando..."
+                        : mapping.llmGeneratedValueText.trim()
+                          ? "Regenerar"
+                          : "Generar"}
+                    </button>
+                    <button
+                      type="button"
+                      className="button-secondary"
+                      onClick={() => {
                         updateMapping(side, field.key, (current) => ({
                           ...current,
-                          sourcePath: nextValue,
+                          llmGeneratedValueText: "",
+                          llmGenerationMeta: undefined,
                         }));
                       }}
-                      placeholder="value.text o 0.answer"
-                    />
-                  </label>
+                      disabled={isGenerating}
+                    >
+                      Limpiar resultado
+                    </button>
+                  </div>
 
-                  <label className="block space-y-2">
-                    <FormLabel>Transforms</FormLabel>
-                    <input
-                      className="field"
-                      value={serializeTransformChain(mapping.transformChain)}
-                      onChange={(event) => {
-                        const nextValue = parseTransformChainText(event.target.value);
-                        updateMapping(side, field.key, (current) => ({
-                          ...current,
-                          transformChain: nextValue,
-                        }));
-                      }}
-                      placeholder="trim | pick_path:value"
-                    />
-                  </label>
+                  {generationMeta ? (
+                    <div className="dataset-mapping-mini-panel mt-4">
+                      <p className="dataset-mapping-eyebrow">Proveniencia LLM</p>
+                      <div className="mt-3 space-y-1 text-sm text-[var(--muted)]">
+                        <p>
+                          Configuracion: {typeof generationMeta.configurationName === "string" ? generationMeta.configurationName : "Sin nombre"}
+                        </p>
+                        <p>
+                          Modelo: {typeof generationMeta.model === "string" ? generationMeta.model : "No disponible"}
+                        </p>
+                        {generatedAt ? <p>Generado: {generatedAt}</p> : null}
+                        {typeof generationMeta.confidence === "number" ? (
+                          <p>Confianza estimada: {Math.round(generationMeta.confidence * 100)}%</p>
+                        ) : null}
+                        {typeof generationMeta.notes === "string" && generationMeta.notes.trim() ? (
+                          <p>Notas: {generationMeta.notes}</p>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  <div className="mt-4 grid gap-3 md:grid-cols-2">
+                    <label className="block space-y-2">
+                      <FormLabel className="dataset-mapping-control-label">
+                        Path post-generacion
+                      </FormLabel>
+                      <input
+                        className="field"
+                        value={mapping.sourcePath}
+                        onChange={(event) => {
+                          const nextValue = event.target.value;
+                          updateMapping(side, field.key, (current) => ({
+                            ...current,
+                            sourcePath: nextValue,
+                          }));
+                        }}
+                        placeholder="value.text o 0.answer"
+                      />
+                    </label>
+
+                    <label className="block space-y-2">
+                      <FormLabel className="dataset-mapping-control-label">Transforms</FormLabel>
+                      <input
+                        className="field"
+                        value={serializeTransformChain(mapping.transformChain)}
+                        onChange={(event) => {
+                          const nextValue = parseTransformChainText(event.target.value);
+                          updateMapping(side, field.key, (current) => ({
+                            ...current,
+                            transformChain: nextValue,
+                          }));
+                        }}
+                        placeholder="trim | pick_path:value"
+                      />
+                    </label>
+                  </div>
+                </section>
+              ) : null}
+            </div>
+
+            <aside className="space-y-4">
+              <section className="dataset-mapping-mini-panel">
+                <div className="flex flex-wrap items-center gap-2">
+                  {renderBadge(SOURCE_BADGES[mapping.sourceKey], "accent")}
+                  <span className="dataset-mapping-chip">{SOURCE_LABELS[mapping.sourceKey]}</span>
                 </div>
-              </div>
-            ) : null}
-          </div>
+                <div className="mt-3 space-y-2 text-sm text-[var(--muted)]">
+                  <p>
+                    Resolucion actual: <span className="font-medium text-[var(--foreground)]">{mapping.sourceKey}</span>
+                  </p>
+                  {mapping.sourceKey === "llm_generated" && mapping.llmGeneratedValueText.trim() ? (
+                    <p>Resultado LLM listo para persistir o ajustar.</p>
+                  ) : null}
+                  {mapping.sourceKey === "manual" && mapping.manualValueText.trim() ? (
+                    <p>Valor manual presente.</p>
+                  ) : null}
+                  {mapping.sourceKey === "constant" && mapping.constantValueText.trim() ? (
+                    <p>Valor constante configurado.</p>
+                  ) : null}
+                </div>
+              </section>
 
-          <div className="space-y-3">
-            <div className="rounded-[1.25rem] border border-[var(--line)] bg-white/75 p-4">
-              <p className="text-sm font-semibold text-[var(--foreground)]">Estado del campo</p>
-              <div className="mt-3 space-y-2 text-sm text-[var(--muted)]">
-                <p>
-                  Resolución actual: <span className="font-medium text-[var(--foreground)]">{mapping.sourceKey}</span>
+              <section className="dataset-mapping-mini-panel">
+                <p className="dataset-mapping-eyebrow">Ultimo mensaje del usuario</p>
+                <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-[var(--muted)]">
+                  {liveSourceSlice.lastUserMessage || "Sin mensaje de usuario detectado."}
                 </p>
-                {mapping.sourceKey === "llm_generated" && mapping.llmGeneratedValueText.trim() ? (
-                  <p>Resultado LLM listo para persistir o ajustar.</p>
-                ) : null}
-                {mapping.sourceKey === "manual" && mapping.manualValueText.trim() ? (
-                  <p>Valor manual presente.</p>
-                ) : null}
-                {mapping.sourceKey === "constant" && mapping.constantValueText.trim() ? (
-                  <p>Valor constante configurado.</p>
-                ) : null}
-              </div>
-            </div>
+              </section>
 
-            <div className="rounded-[1.25rem] border border-[var(--line)] bg-white/75 p-4">
-              <p className="text-sm font-semibold text-[var(--foreground)]">Último mensaje del usuario</p>
-              <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-[var(--muted)]">
-                {liveSourceSlice.lastUserMessage || "Sin mensaje de usuario detectado."}
-              </p>
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <FormLabel>Preview</FormLabel>
-            <pre className="min-h-36 overflow-x-auto rounded-[1rem] border border-[var(--line)] bg-[rgba(15,23,42,0.04)] p-3 text-xs leading-6 text-[var(--muted-strong)]">
-              {prettyJson(preview)}
-            </pre>
+              <section className="dataset-mapping-preview-panel">
+                <FormLabel className="dataset-mapping-control-label">Preview</FormLabel>
+                <pre className="mt-3 overflow-x-auto whitespace-pre-wrap text-xs leading-6 text-[var(--muted-strong)]">
+                  {prettyJson(preview)}
+                </pre>
+              </section>
+            </aside>
           </div>
         </article>
       );
     });
 
   return (
-    <form action={formAction} className="space-y-8">
+    <form action={formAction} className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
       <input type="hidden" name="datasetSpecId" value={selectedSpec?.id ?? ""} />
       <input type="hidden" name="title" value={title} />
       <input type="hidden" name="sourceTitle" value={sourceTitle} />
@@ -597,278 +909,431 @@ export function DatasetExampleEditor(props: {
       <input type="hidden" name="outputPayloadJson" value={effectiveOutputPayloadText} />
       <input type="hidden" name="mappingsJson" value={serializeMappings(mappings)} />
 
-      <section className="surface rounded-[1.75rem] p-5 sm:p-6">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <p className="text-sm uppercase tracking-[0.22em] text-[var(--muted)]">Fuente</p>
-            <h1 className="mt-3 text-3xl font-semibold tracking-tight">
-              {props.mode === "create" ? "Nuevo editor DSPy" : title || "Editar dataset example"}
-            </h1>
-            <p className="mt-3 max-w-3xl text-sm leading-7 text-[var(--muted)]">
-              Revisa el slice seleccionado, ajusta el resumen curatorial y define la firma final campo por campo con mapeo directo, texto manual o generación asistida por LLM.
+      <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-[#faf9f6] text-[var(--foreground)] dark:bg-[var(--background)]">
+        <header className="flex h-16 shrink-0 items-center justify-between border-b border-[var(--line)] bg-[rgba(250,249,246,0.94)] px-4 backdrop-blur sm:px-6">
+          <div className="min-w-0">
+            <p className="font-[var(--font-editorial)] text-xl font-black tracking-tight text-[var(--accent)] sm:text-2xl">
+              Conversation Lab
+            </p>
+            <p className="mt-0.5 text-[10px] uppercase tracking-[0.24em] text-[var(--muted)]">
+              Hybrid DSPy Mapping Editor
             </p>
           </div>
 
-          {selectedSpec ? (
-            <div className="rounded-[1.25rem] border border-[var(--line)] bg-white/75 px-4 py-3 text-sm">
-              <p className="font-semibold text-[var(--foreground)]">{selectedSpec.name}</p>
-              <p className="mt-1 text-[var(--muted)]">
-                {selectedSpec.slug} · v{selectedSpec.version}
+          <div className="flex items-center gap-2 sm:gap-3">
+            <Link
+              href={props.backHref}
+              className="rounded-full border border-[var(--line)] bg-white/80 px-3 py-2 text-xs font-medium text-[var(--muted-strong)] transition-colors hover:text-[var(--foreground)]"
+            >
+              {props.backLabel}
+            </Link>
+            <Link
+              href="/exports"
+              className="rounded-full px-3 py-2 text-xs font-medium uppercase tracking-[0.18em] text-[var(--muted)] transition-colors hover:bg-white/80 hover:text-[var(--foreground)]"
+            >
+              Exportar
+            </Link>
+            <FormSubmitButton
+              type="submit"
+              className="rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-[var(--accent-strong)]"
+              pendingLabel={props.mode === "create" ? "Guardando..." : "Actualizando..."}
+            >
+              {props.mode === "create" ? "Guardar Dataset" : "Guardar Cambios"}
+            </FormSubmitButton>
+          </div>
+        </header>
+
+        <div className="flex min-h-0 flex-1 flex-col xl:grid xl:grid-cols-[20rem_minmax(0,1fr)_18rem]">
+          <aside className="min-h-0 border-b border-[var(--line)] bg-white/80 xl:border-b-0 xl:border-r">
+            <div className="border-b border-[var(--line)] bg-[rgba(250,249,246,0.7)] px-4 py-4 backdrop-blur sm:px-5">
+              <h3 className="font-[var(--font-editorial)] text-lg font-semibold text-[var(--accent)]">
+                Transcripcion de Origen
+              </h3>
+              <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.22em] text-[var(--muted)]">
+                Origen de la verdad
               </p>
             </div>
-          ) : null}
-        </div>
 
-        <div className="mt-6 grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
-          <div className="space-y-4">
-            <div className="grid gap-4 md:grid-cols-2">
-              <label className="block space-y-2">
-                <FormLabel>Título del example</FormLabel>
-                <input
-                  className="field"
-                  value={title}
-                  onChange={(event) => setTitle(event.target.value)}
-                  placeholder="QA sobre consulta sensible"
-                />
-              </label>
+            <div className="flex h-full min-h-0 flex-col overflow-y-auto px-4 py-4 sm:px-5">
+              <div className="space-y-4">
+                {props.sourceSlice.conversationSlice.map((message) => {
+                  const isUser = message.role === "user";
 
-              <label className="block space-y-2">
-                <FormLabel>Título del slice</FormLabel>
-                <input
-                  className="field"
-                  value={sourceTitle}
-                  onChange={(event) => setSourceTitle(event.target.value)}
-                  placeholder="Slice 3-6"
-                />
-              </label>
-            </div>
-
-            <label className="block space-y-2">
-              <FormLabel>Resumen curatorial</FormLabel>
-              <textarea
-                className="field min-h-28"
-                value={sourceSummary}
-                onChange={(event) => setSourceSummary(event.target.value)}
-                placeholder="Resume por qué este slice es útil para el dataset."
-              />
-            </label>
-
-            <div className="rounded-[1.5rem] border border-[var(--line)] bg-white/70 p-4">
-              <p className="text-sm font-semibold text-[var(--foreground)]">Transcript seleccionado</p>
-              <div className="mt-4 space-y-3">
-                {props.sourceSlice.conversationSlice.map((message) => (
-                  <article
-                    key={message.id}
-                    className="rounded-[1.25rem] border border-[var(--line)] bg-[rgba(15,23,42,0.03)] p-4"
-                  >
-                    <div className="flex items-center justify-between gap-3 text-xs uppercase tracking-[0.18em] text-[var(--muted)]">
-                      <span>{message.role === "user" ? "Usuario" : "Asistente"}</span>
-                      <span>Turno {message.orderIndex + 1}</span>
-                    </div>
-                    <p className="mt-3 whitespace-pre-wrap text-sm leading-7 text-[var(--muted-strong)]">
-                      {message.text}
-                    </p>
-                  </article>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <div className="space-y-4">
-            <label className="block space-y-2">
-              <FormLabel>Dataset spec</FormLabel>
-              <select
-                className="field"
-                value={datasetSpecId}
-                onChange={(event) => {
-                  const nextDatasetSpecId = event.target.value;
-                  const nextSpec =
-                    props.datasetSpecs.find((spec) => spec.id === nextDatasetSpecId) ?? null;
-
-                  setDatasetSpecId(nextDatasetSpecId);
-                  setMappings(
-                    nextSpec
-                      ? nextSpec.id === props.initialDatasetSpecId && props.initialMappings?.length
-                        ? hydrateMappingsFromStored({
-                            inputSchema: nextSpec.inputSchema,
-                            outputSchema: nextSpec.outputSchema,
-                            storedMappings: props.initialMappings,
-                          })
-                        : [
-                            ...buildDefaultMappings(nextSpec.inputSchema, "input"),
-                            ...buildDefaultMappings(nextSpec.outputSchema, "output"),
-                          ]
-                      : [],
+                  return (
+                    <article
+                      key={message.id}
+                      className={[
+                        "flex items-start gap-3",
+                        isUser ? "flex-row-reverse" : "",
+                      ]
+                        .filter(Boolean)
+                        .join(" ")}
+                    >
+                      <div
+                        className={[
+                          "mt-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold uppercase",
+                          isUser
+                            ? "bg-[rgba(204,85,0,0.12)] text-[#cc5500]"
+                            : "bg-[rgba(43,94,140,0.12)] text-[#2b5e8c]",
+                        ].join(" ")}
+                      >
+                        {isUser ? "U" : "A"}
+                      </div>
+                      <div
+                        className={[
+                          "relative rounded-xl border px-3 py-3 text-sm leading-6 shadow-[0_1px_3px_rgba(0,0,0,0.05)]",
+                          isUser
+                            ? "border-[rgba(204,85,0,0.18)] bg-white"
+                            : "border-[rgba(24,35,47,0.08)] bg-[rgba(250,249,246,0.92)]",
+                        ].join(" ")}
+                      >
+                        <div className="mb-1 flex items-center justify-between gap-3 text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">
+                          <span>{isUser ? "Usuario" : "Asistente"}</span>
+                          <span>Turno {message.orderIndex + 1}</span>
+                        </div>
+                        <p className={isUser ? "text-[var(--foreground)]" : "text-[var(--muted-strong)]"}>
+                          {message.text}
+                        </p>
+                      </div>
+                    </article>
                   );
-                  setInputManualOverride(false);
-                  setOutputManualOverride(false);
-                }}
-              >
-                {props.datasetSpecs.map((spec) => (
-                  <option key={spec.id} value={spec.id}>
-                    {spec.name} ({spec.slug})
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="block space-y-2">
-              <FormLabel>Estado</FormLabel>
-              <select
-                className="field"
-                value={reviewStatus}
-                onChange={(event) =>
-                  setReviewStatus(event.target.value as (typeof DATASET_EXAMPLE_STATUSES)[number])
-                }
-              >
-                {DATASET_EXAMPLE_STATUSES.map((status) => (
-                  <option key={status} value={status}>
-                    {status}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <div className="rounded-[1.5rem] border border-[var(--line)] bg-white/70 p-4">
-              <p className="text-sm font-semibold text-[var(--foreground)]">Configuraciones LLM globales</p>
-              <div className="mt-3 space-y-2 text-sm text-[var(--muted)]">
-                {props.llmConfigurations.length === 0 ? (
-                  <p>No hay configuraciones LLM globales guardadas todavía.</p>
-                ) : (
-                  props.llmConfigurations.slice(0, 4).map((configuration) => (
-                    <p key={configuration.id}>
-                      {configuration.name} · {configuration.chatModel}
-                    </p>
-                  ))
-                )}
+                })}
               </div>
-            </div>
 
-            <div className="rounded-[1.5rem] border border-[var(--line)] bg-white/70 p-4">
-              <p className="text-sm font-semibold text-[var(--foreground)]">Contexto auxiliar</p>
-              <pre className="mt-3 max-h-72 overflow-auto rounded-[1rem] bg-[rgba(15,23,42,0.04)] p-3 text-xs leading-6 text-[var(--muted-strong)]">
-                {props.sourceSlice.surroundingContext.length === 0
-                  ? "Sin contexto adicional cercano."
-                  : JSON.stringify(props.sourceSlice.surroundingContext, null, 2)}
-              </pre>
-            </div>
+              <div className="mt-6 border-t border-[var(--line)] pt-5">
+                <label className="block space-y-2">
+                  <span className="font-[var(--font-label)] text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--muted)]">
+                    Notas del Operador
+                  </span>
+                  <textarea
+                    className="field min-h-28 resize-y text-sm leading-6"
+                    value={sourceSummary}
+                    onChange={(event) => setSourceSummary(event.target.value)}
+                    placeholder="Anadir contexto adicional..."
+                  />
+                </label>
+              </div>
 
-            <div className="rounded-[1.5rem] border border-[var(--line)] bg-white/70 p-4">
-              <p className="text-sm font-semibold text-[var(--foreground)]">Última validación guardada</p>
-              <div className="mt-3 space-y-2 text-sm text-[var(--muted)]">
-                <p>{props.initialValidationState?.shapeMatches ? "Shape válido" : "Todavía no validado"}</p>
-                {(props.initialValidationState?.structuralErrors ?? []).map((error) => (
-                  <p key={error} className="text-rose-700">
-                    {error}
+              <div className="mt-6 space-y-4">
+                <div className="rounded-[1rem] border border-[var(--line)] bg-white/80 p-4">
+                  <p className="font-[var(--font-label)] text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--muted)]">
+                    Configuracion
                   </p>
-                ))}
-                {(props.initialValidationState?.semanticWarnings ?? []).map((warning) => (
-                  <p key={warning} className="text-amber-700">
-                    {warning}
+                  <div className="mt-3 space-y-3">
+                    <label className="block space-y-2">
+                      <FormLabel className="dataset-mapping-control-label">Titulo del example</FormLabel>
+                      <input
+                        className="field"
+                        value={title}
+                        onChange={(event) => setTitle(event.target.value)}
+                        placeholder="Nombre interno del dataset example"
+                      />
+                    </label>
+                    <label className="block space-y-2">
+                      <FormLabel className="dataset-mapping-control-label">Titulo del slice</FormLabel>
+                      <input
+                        className="field"
+                        value={sourceTitle}
+                        onChange={(event) => setSourceTitle(event.target.value)}
+                        placeholder="Slice 3-6"
+                      />
+                    </label>
+                    <label className="block space-y-2">
+                      <FormLabel className="dataset-mapping-control-label">Dataset spec</FormLabel>
+                      <select
+                        className="field"
+                        value={datasetSpecId}
+                        onChange={(event) => {
+                          const nextDatasetSpecId = event.target.value;
+                          const nextSpec =
+                            props.datasetSpecs.find((spec) => spec.id === nextDatasetSpecId) ?? null;
+
+                          setDatasetSpecId(nextDatasetSpecId);
+                          setMappings(
+                            nextSpec
+                              ? nextSpec.id === props.initialDatasetSpecId && props.initialMappings?.length
+                                ? hydrateMappingsFromStored({
+                                    inputSchema: nextSpec.inputSchema,
+                                    outputSchema: nextSpec.outputSchema,
+                                    storedMappings: props.initialMappings,
+                                  })
+                                : [
+                                    ...buildDefaultMappings(nextSpec.inputSchema, "input"),
+                                    ...buildDefaultMappings(nextSpec.outputSchema, "output"),
+                                  ]
+                              : [],
+                          );
+                          setInputManualOverride(false);
+                          setOutputManualOverride(false);
+                        }}
+                      >
+                        {props.datasetSpecs.map((spec) => (
+                          <option key={spec.id} value={spec.id}>
+                            {spec.name} ({spec.slug})
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="block space-y-2">
+                      <FormLabel className="dataset-mapping-control-label">Estado</FormLabel>
+                      <select
+                        className="field"
+                        value={reviewStatus}
+                        onChange={(event) =>
+                          setReviewStatus(
+                            event.target.value as (typeof DATASET_EXAMPLE_STATUSES)[number],
+                          )
+                        }
+                      >
+                        {DATASET_EXAMPLE_STATUSES.map((status) => (
+                          <option key={status} value={status}>
+                            {status}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                </div>
+
+                <div className="rounded-[1rem] border border-[var(--line)] bg-white/80 p-4">
+                  <p className="font-[var(--font-label)] text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--muted)]">
+                    Configuraciones LLM globales
                   </p>
-                ))}
+                  <div className="mt-3 space-y-2 text-sm text-[var(--muted)]">
+                    {props.llmConfigurations.length === 0 ? (
+                      <p>No hay configuraciones LLM guardadas todavia.</p>
+                    ) : (
+                      props.llmConfigurations.slice(0, 4).map((configuration) => (
+                        <p key={configuration.id}>
+                          {configuration.name} · {configuration.chatModel}
+                        </p>
+                      ))
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
-          </div>
-        </div>
-      </section>
+          </aside>
 
-      {selectedSpec ? (
-        <section className="surface rounded-[1.75rem] p-5 sm:p-6">
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <div>
-              <p className="text-sm uppercase tracking-[0.22em] text-[var(--muted)]">Mapeo</p>
-              <h2 className="mt-2 text-2xl font-semibold tracking-tight">
-                Selecciona la fuente y ajusta la resolución por campo.
-              </h2>
-              <p className="mt-2 text-sm text-[var(--muted)]">
-                Cada campo puede salir de una fuente del slice, texto manual o una generación puntual con LLM global.
-              </p>
-            </div>
-          </div>
-
-          <div className="mt-6 space-y-6">
-            <div className="space-y-4">
-              <div>
-                <p className="text-lg font-semibold text-[var(--foreground)]">Input</p>
-                <p className="text-sm text-[var(--muted)]">
-                  Campos que alimentan la firma de entrada.
-                </p>
+          <section className="min-h-0 bg-[#faf9f6] dark:bg-[var(--background)]">
+            <div className="sticky top-0 z-10 border-b border-[var(--line)] bg-[rgba(255,255,255,0.82)] px-5 py-5 shadow-sm backdrop-blur sm:px-6">
+              <div className="flex items-end justify-between gap-4">
+                <div>
+                  <h1 className="font-[var(--font-editorial)] text-2xl font-bold tracking-tight text-[var(--accent)]">
+                    Campos de Destino
+                    <span className="ml-2 font-mono text-sm font-normal text-[var(--muted)]">
+                      (DSPy Signature)
+                    </span>
+                  </h1>
+                  <p className="mt-1 text-sm text-[var(--muted)]">
+                    Configura la proveniencia de cada campo para el pipeline de inferencia.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="rounded-lg border border-[var(--line)] bg-white px-3 py-2 text-xs font-medium text-[var(--muted-strong)] transition-colors hover:text-[var(--accent)]"
+                  onClick={() => setShowSchema((current) => !current)}
+                >
+                  {showSchema ? "Ocultar esquema" : "Ver esquema"}
+                </button>
               </div>
-              {renderRows("input", selectedSpec.inputSchema)}
+
+              {renderSchemaSummary()}
             </div>
 
-            <div className="space-y-4">
-              <div>
-                <p className="text-lg font-semibold text-[var(--foreground)]">Output</p>
-                <p className="text-sm text-[var(--muted)]">
-                  Campos que definen la respuesta o etiqueta final del dataset.
-                </p>
+            <div className="h-full overflow-y-auto px-5 py-6 sm:px-6">
+              {selectedSpec ? (
+                <div className="space-y-8 pb-24">
+                  <div className="space-y-4">
+                    {selectedSpec.inputSchema.length > 0 ? (
+                      <div>
+                        <p className="font-[var(--font-editorial)] text-xl font-semibold text-[var(--foreground)]">
+                          Input
+                        </p>
+                        <p className="mt-1 text-sm text-[var(--muted)]">
+                          Campos que alimentan la firma de entrada.
+                        </p>
+                      </div>
+                    ) : null}
+                    {renderRows("input", selectedSpec.inputSchema)}
+                  </div>
+
+                  <div className="space-y-4">
+                    {selectedSpec.outputSchema.length > 0 ? (
+                      <div>
+                        <p className="font-[var(--font-editorial)] text-xl font-semibold text-[var(--foreground)]">
+                          Output
+                        </p>
+                        <p className="mt-1 text-sm text-[var(--muted)]">
+                          Campos que definen la respuesta o etiqueta final del dataset.
+                        </p>
+                      </div>
+                    ) : null}
+                    {renderRows("output", selectedSpec.outputSchema)}
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-[1.25rem] border border-[var(--line)] bg-white/80 p-6 text-sm text-[var(--muted)]">
+                  No hay dataset specs activos para construir este example.
+                </div>
+              )}
+            </div>
+          </section>
+
+          <aside className="min-h-0 border-t border-[var(--line)] bg-[rgba(250,249,246,0.86)] xl:border-t-0 xl:border-l">
+            <div className="border-b border-[var(--line)] bg-white/60 px-4 py-4 backdrop-blur sm:px-5">
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="font-[var(--font-editorial)] text-lg font-semibold text-[var(--accent)]">
+                  Validacion y Payload
+                </h3>
+                <span
+                  className={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-xs font-semibold ${getValidationTone(readinessPercent)}`}
+                >
+                  <span className="h-1.5 w-1.5 rounded-full bg-current opacity-80" />
+                  {readinessPercent}%
+                </span>
               </div>
-              {renderRows("output", selectedSpec.outputSchema)}
             </div>
-          </div>
-        </section>
-      ) : null}
 
-      <section className="surface rounded-[1.75rem] p-5 sm:p-6">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <p className="text-sm uppercase tracking-[0.22em] text-[var(--muted)]">Resultado</p>
-            <h2 className="mt-2 text-2xl font-semibold tracking-tight">
-              JSON final editable con override explícito.
-            </h2>
-          </div>
+            <div className="flex h-full min-h-0 flex-col overflow-y-auto px-4 py-4 sm:px-5">
+              <div className="space-y-6 pb-28">
+                <div className="rounded-[1rem] border border-[var(--line)] bg-white/80 p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <h4 className="font-[var(--font-label)] text-[11px] uppercase tracking-[0.18em] text-[var(--muted)]">
+                      Input JSON
+                    </h4>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        className="text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--muted)]"
+                        onClick={() => setInputManualOverride((current) => !current)}
+                      >
+                        {inputManualOverride ? "Preview" : "Editar"}
+                      </button>
+                      <button
+                        type="button"
+                        className="text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--muted)]"
+                        onClick={() => setInputManualOverride(false)}
+                      >
+                        Reset
+                      </button>
+                    </div>
+                  </div>
+                  {inputManualOverride ? (
+                    <textarea
+                      className="field mt-3 min-h-48 font-mono text-xs"
+                      value={effectiveInputPayloadText}
+                      onChange={(event) => {
+                        setInputManualOverride(true);
+                        setInputPayloadText(event.target.value);
+                      }}
+                    />
+                  ) : (
+                    <pre className="mt-3 overflow-x-auto rounded-md border border-[var(--line)] bg-[#1e1e1e] p-3 text-[11px] leading-relaxed text-green-400">
+                      {effectiveInputPayloadText}
+                    </pre>
+                  )}
+                </div>
 
-          <div className="flex flex-wrap gap-3">
-            <button type="button" className="button-secondary" onClick={() => setInputManualOverride(false)}>
-              Reset input desde mapping
-            </button>
-            <button type="button" className="button-secondary" onClick={() => setOutputManualOverride(false)}>
-              Reset output desde mapping
-            </button>
-          </div>
+                <div className="rounded-[1rem] border border-[var(--line)] bg-white/80 p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <h4 className="font-[var(--font-label)] text-[11px] uppercase tracking-[0.18em] text-[var(--muted)]">
+                      Output JSON Preview
+                    </h4>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        className="text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--muted)]"
+                        onClick={() => setOutputManualOverride((current) => !current)}
+                      >
+                        {outputManualOverride ? "Preview" : "Editar"}
+                      </button>
+                      <button
+                        type="button"
+                        className="text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--muted)]"
+                        onClick={() => setOutputManualOverride(false)}
+                      >
+                        Reset
+                      </button>
+                    </div>
+                  </div>
+                  {outputManualOverride ? (
+                    <textarea
+                      className="field mt-3 min-h-48 font-mono text-xs"
+                      value={effectiveOutputPayloadText}
+                      onChange={(event) => {
+                        setOutputManualOverride(true);
+                        setOutputPayloadText(event.target.value);
+                      }}
+                    />
+                  ) : (
+                    <pre className="mt-3 overflow-x-auto rounded-md border border-[var(--line)] bg-[#1e1e1e] p-3 text-[11px] leading-relaxed text-green-400">
+                      {effectiveOutputPayloadText}
+                    </pre>
+                  )}
+                </div>
+
+                <div className="rounded-[1rem] border border-[var(--line)] bg-white/80 p-4">
+                  <h4 className="font-[var(--font-label)] text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">
+                    Checks DSPy
+                  </h4>
+                  <ul className="mt-3 space-y-2 text-sm">
+                    {validationChecks.map((check) => (
+                      <li
+                        key={check.label}
+                        className={`flex items-start gap-2 ${getCheckTone(check.kind)}`}
+                      >
+                        <span className="mt-0.5 h-2 w-2 shrink-0 rounded-full bg-current" />
+                        <span>{check.label}</span>
+                      </li>
+                    ))}
+                    {structuralErrors.map((error) => (
+                      <li key={error} className="flex items-start gap-2 text-rose-800">
+                        <span className="mt-0.5 h-2 w-2 shrink-0 rounded-full bg-current" />
+                        <span>{error}</span>
+                      </li>
+                    ))}
+                    {semanticWarnings.map((warning) => (
+                      <li key={warning} className="flex items-start gap-2 text-amber-800">
+                        <span className="mt-0.5 h-2 w-2 shrink-0 rounded-full bg-current" />
+                        <span>{warning}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+
+                {props.metadata ? (
+                  <div className="rounded-[1rem] border border-[var(--line)] bg-white/80 p-4 text-sm text-[var(--muted)]">
+                    <h4 className="font-[var(--font-label)] text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">
+                      Metadata
+                    </h4>
+                    <div className="mt-3 space-y-2">
+                      <p>Spec: {props.metadata.specSlug}</p>
+                      <p>Version: {props.metadata.version}</p>
+                      <p>Source slice: {props.metadata.sourceSliceId}</p>
+                      <p>Field mappings: {props.metadata.fieldMappingCount}</p>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="sticky bottom-0 mt-auto border-t border-[var(--line)] bg-[rgba(250,249,246,0.96)] pb-2 pt-4 backdrop-blur">
+                <FormSubmitButton
+                  type="submit"
+                  className="flex w-full items-center justify-center rounded-xl bg-[#cc5500] px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-[#ff6a00]"
+                  pendingLabel={
+                    props.mode === "create"
+                      ? "Guardando dataset..."
+                      : "Guardando cambios..."
+                  }
+                >
+                  {props.mode === "create" ? "Crear borrador" : "Guardar cambios"}
+                </FormSubmitButton>
+              </div>
+            </div>
+          </aside>
         </div>
-
-        <div className="mt-6 grid gap-4 xl:grid-cols-2">
-          <label className="block space-y-2">
-            <FormLabel>Input JSON</FormLabel>
-            <textarea
-              className="field min-h-72 font-mono text-xs"
-              value={effectiveInputPayloadText}
-              onChange={(event) => {
-                setInputManualOverride(true);
-                setInputPayloadText(event.target.value);
-              }}
-            />
-          </label>
-
-          <label className="block space-y-2">
-            <FormLabel>Output JSON</FormLabel>
-            <textarea
-              className="field min-h-72 font-mono text-xs"
-              value={effectiveOutputPayloadText}
-              onChange={(event) => {
-                setOutputManualOverride(true);
-                setOutputPayloadText(event.target.value);
-              }}
-            />
-          </label>
-        </div>
-
-        <div className="mt-6 flex flex-wrap items-center gap-3">
-          <FormSubmitButton
-            type="submit"
-            className="button-primary"
-            pendingLabel={props.mode === "create" ? "Guardando example..." : "Actualizando example..."}
-          >
-            {props.mode === "create" ? "Guardar dataset example" : "Actualizar dataset example"}
-          </FormSubmitButton>
-          <span className="text-sm text-[var(--muted)]">
-            El guardado valida estructura y persiste el mapping junto con los payloads finales.
-          </span>
-        </div>
-      </section>
+      </div>
     </form>
   );
 }
