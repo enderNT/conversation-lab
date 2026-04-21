@@ -27,6 +27,11 @@ import {
   validateDerivedExample,
 } from "@/lib/cases";
 import {
+  buildDatasetFieldGenerationPrompt,
+  buildDatasetFieldGenerationRequestPreview,
+  normalizeDatasetLlmContextSelection,
+} from "@/lib/dataset-llm";
+import {
   buildSourceSliceMetadata,
   deriveLastUserMessage as deriveDatasetLastUserMessage,
   parseStrictJsonValue as parseStrictDatasetJsonValue,
@@ -218,6 +223,7 @@ const datasetFieldMappingSchema = z.object({
   manualValueText: z.string().default(""),
   llmConfigurationId: z.string().default(""),
   llmPromptText: z.string().default(""),
+  llmContextSelection: z.record(z.string(), z.boolean()).optional(),
   llmGeneratedValueText: z.string().default(""),
   llmGenerationMeta: z.any().optional(),
   ragConfigurationId: z.string().default(""),
@@ -253,6 +259,7 @@ const datasetFieldGenerationSchema = z.object({
   surroundingContextJson: z.string().trim().default("[]"),
   inputPayloadJson: z.string().trim().default("{}"),
   outputPayloadJson: z.string().trim().default("{}"),
+  llmContextSelection: z.record(z.string(), z.boolean()).optional(),
 });
 
 const datasetFieldRagGenerationSchema = z.object({
@@ -355,56 +362,6 @@ function parseDatasetJsonObject(value: string, label: string) {
   return parsedValue as JsonObject;
 }
 
-function buildDatasetFieldGenerationPrompt(input: {
-  side: "input" | "output";
-  field: DatasetSchemaField;
-  datasetSpecName: string;
-  datasetSpecSlug: string;
-  datasetSpecDescription: string;
-  promptText: string;
-  lastUserMessage: string;
-  sourceSummary: string;
-  sessionNotes: string;
-  conversationSliceJson: string;
-  surroundingContextJson: string;
-  inputPayloadJson: string;
-  outputPayloadJson: string;
-}) {
-  const enumHint = input.field.enumValues?.length
-    ? `Valores permitidos: ${input.field.enumValues.join(", ")}.`
-    : "";
-
-  return [
-    "Genera el valor de un unico campo para un dataset example de DSPy.",
-    `Spec: ${input.datasetSpecName || input.datasetSpecSlug || "dataset_spec"}.`,
-    input.datasetSpecDescription ? `Descripcion del spec: ${input.datasetSpecDescription}` : "",
-    `Campo destino: ${input.field.key}.`,
-    `Lado: ${input.side}.`,
-    `Tipo esperado: ${input.field.type}.`,
-    `Requerido: ${input.field.required ? "si" : "no"}.`,
-    input.field.description ? `Descripcion del campo: ${input.field.description}` : "",
-    enumHint,
-    "Devuelve SOLO JSON valido, sin markdown ni texto extra.",
-    'Usa exactamente esta forma: {"value": ..., "confidence": 0.0, "notes": "..."}.',
-    "El contenido de value debe respetar el tipo esperado del campo.",
-    "Si el valor debe salir de la conversacion o del contexto, sintetizalo de forma util para entrenamiento, no copies ruido innecesario.",
-    `Instruccion del operador: ${input.promptText}`,
-    `Ultimo mensaje del usuario: ${input.lastUserMessage || ""}`,
-    `Resumen curatorial: ${input.sourceSummary || ""}`,
-    `Notas de sesion: ${input.sessionNotes || ""}`,
-    "Transcript seleccionado:",
-    input.conversationSliceJson,
-    "Contexto cercano:",
-    input.surroundingContextJson,
-    "Payload input actual:",
-    input.inputPayloadJson,
-    "Payload output actual:",
-    input.outputPayloadJson,
-  ]
-    .filter(Boolean)
-    .join("\n\n");
-}
-
 function buildDatasetFieldRagQuery(input: {
   side: "input" | "output";
   field: DatasetSchemaField;
@@ -419,6 +376,7 @@ function buildDatasetFieldRagQuery(input: {
   surroundingContextJson: string;
   inputPayloadJson: string;
   outputPayloadJson: string;
+  llmContextSelection?: Record<string, boolean>;
 }) {
   return [
     `Campo destino: ${input.field.key}`,
@@ -3272,6 +3230,10 @@ function buildPersistedMappings(input: {
         manualValue === null ? Prisma.JsonNull : (manualValue as Prisma.InputJsonValue),
       llmConfigurationId: mapping.llmConfigurationId.trim() || null,
       llmPromptText: mapping.llmPromptText.trim() || null,
+      llmContextSelectionJson:
+        mapping.llmContextSelection === undefined
+          ? Prisma.JsonNull
+          : (normalizeDatasetLlmContextSelection(mapping.llmContextSelection) as Prisma.InputJsonValue),
       llmGeneratedValueJson:
         llmGeneratedValue === null ? Prisma.JsonNull : (llmGeneratedValue as Prisma.InputJsonValue),
       llmGenerationMetaJson:
@@ -3324,6 +3286,7 @@ export async function generateDatasetFieldWithLlm(input: {
   surroundingContextJson: string;
   inputPayloadJson: string;
   outputPayloadJson: string;
+  llmContextSelection?: Record<string, boolean>;
 }) {
   const parsed = datasetFieldGenerationSchema.safeParse(input);
 
@@ -3369,14 +3332,24 @@ export async function generateDatasetFieldWithLlm(input: {
     };
   }
 
-  const prompt = buildDatasetFieldGenerationPrompt(parsed.data);
+  const llmContextSelection = normalizeDatasetLlmContextSelection(parsed.data.llmContextSelection);
+  const prompt = buildDatasetFieldGenerationPrompt({
+    ...parsed.data,
+    llmContextSelection,
+  });
+  const requestPreview = buildDatasetFieldGenerationRequestPreview({
+    ...parsed.data,
+    model: llmConfiguration.chatModel,
+    configurationName: llmConfiguration.name,
+    llmContextSelection,
+  });
 
   try {
     const response = await generateAssistantReply({
       model: llmConfiguration.chatModel,
       baseUrl: llmConfiguration.chatBaseUrl,
       apiKey: llmConfiguration.chatApiKey,
-      systemPrompt: llmConfiguration.systemPrompt,
+      systemPrompt: null,
       messages: [
         {
           role: "user",
@@ -3395,6 +3368,9 @@ export async function generateDatasetFieldWithLlm(input: {
         configurationId: llmConfiguration.id,
         configurationName: llmConfiguration.name,
         model: response.model,
+        systemPromptApplied: false,
+        llmContextSelection,
+        requestPreview,
         generatedAt,
         responseId: response.responseId,
         promptText: parsed.data.promptText,

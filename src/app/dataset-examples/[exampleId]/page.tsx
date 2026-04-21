@@ -94,6 +94,7 @@ export default async function DatasetExampleDetailPage({
         manualValueJson: mapping.manualValueJson as JsonValue | null,
         llmConfigurationId: mapping.llmConfigurationId,
         llmPromptText: mapping.llmPromptText,
+        llmContextSelectionJson: mapping.llmContextSelectionJson as JsonValue | null,
         llmGeneratedValueJson: mapping.llmGeneratedValueJson as JsonValue | null,
         llmGenerationMetaJson: mapping.llmGenerationMetaJson as JsonValue | null,
         ragConfigurationId: mapping.ragConfigurationId,

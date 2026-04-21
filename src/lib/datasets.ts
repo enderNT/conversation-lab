@@ -1,4 +1,8 @@
 import type { DatasetSpec, SourceSlice } from "@prisma/client";
+import {
+  DEFAULT_DATASET_LLM_CONTEXT_SELECTION,
+  normalizeDatasetLlmContextSelection,
+} from "@/lib/dataset-llm";
 import type {
   ConversationSliceItem,
   DatasetFieldMappingRecord,
@@ -689,6 +693,7 @@ export function buildDefaultMappings(schema: DatasetSchemaField[], side: "input"
       manualValueText: "",
       llmConfigurationId: "",
       llmPromptText: "",
+      llmContextSelection: DEFAULT_DATASET_LLM_CONTEXT_SELECTION,
       llmGeneratedValueText: "",
       ragConfigurationId: "",
       ragPromptText: "",
@@ -710,6 +715,7 @@ export function hydrateMappingsFromStored(input: {
     manualValueJson: JsonValue | null;
     llmConfigurationId?: string | null;
     llmPromptText?: string | null;
+    llmContextSelectionJson?: JsonValue | null;
     llmGeneratedValueJson?: JsonValue | null;
     llmGenerationMetaJson?: JsonValue | null;
     ragConfigurationId?: string | null;
@@ -753,6 +759,7 @@ export function hydrateMappingsFromStored(input: {
       manualValueText: stringifyJsonValue(stored.manualValueJson as JsonValue | undefined),
       llmConfigurationId: stored.llmConfigurationId ?? "",
       llmPromptText: stored.llmPromptText ?? "",
+      llmContextSelection: normalizeDatasetLlmContextSelection(stored.llmContextSelectionJson),
       llmGeneratedValueText: stringifyJsonValue(stored.llmGeneratedValueJson as JsonValue | undefined),
       llmGenerationMeta: (stored.llmGenerationMetaJson as JsonValue | undefined) ?? undefined,
       ragConfigurationId: stored.ragConfigurationId ?? "",

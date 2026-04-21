@@ -1,12 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { useActionState, useMemo, useState } from "react";
+import { useActionState, useEffect, useMemo, useState } from "react";
 import { generateDatasetFieldWithLlm, generateDatasetFieldWithRag } from "@/app/actions";
 import { FormLabel } from "@/components/form-label";
 import { FormSubmitButton } from "@/components/form-submit-button";
 import { useToast } from "@/components/toast-provider";
 import { useActionFeedbackToast } from "@/components/use-action-feedback-toast";
+import {
+  buildDatasetFieldGenerationRequestPreview,
+  DATASET_LLM_CONTEXT_KEYS,
+  DATASET_LLM_CONTEXT_LABELS,
+  normalizeDatasetLlmContextSelection,
+} from "@/lib/dataset-llm";
 import {
   buildDefaultMappings,
   buildPayloadFromMappings,
@@ -63,6 +69,7 @@ type StoredMapping = {
   manualValueJson: JsonValue | null;
   llmConfigurationId?: string | null;
   llmPromptText?: string | null;
+  llmContextSelectionJson?: JsonValue | null;
   llmGeneratedValueJson?: JsonValue | null;
   llmGenerationMetaJson?: JsonValue | null;
   ragConfigurationId?: string | null;
@@ -79,6 +86,14 @@ type DatasetEditorMetadata = {
   fieldMappingCount: number;
 };
 
+type DatasetFieldStep = {
+  side: "input" | "output";
+  field: DatasetSchemaField;
+  mapping: DatasetFieldMappingRecord;
+  stepKey: string;
+  ordinal: number;
+};
+
 function serializeMappings(mappings: DatasetFieldMappingRecord[]) {
   return JSON.stringify(mappings, null, 2);
 }
@@ -89,6 +104,14 @@ function prettyJson(value: JsonValue | undefined) {
   }
 
   return typeof value === "string" ? value : JSON.stringify(value, null, 2);
+}
+
+function renderContextChipClassName(active: boolean) {
+  return [
+    "dataset-mapping-chip",
+    "dataset-mapping-chip-toggle",
+    active ? "dataset-mapping-chip-active" : "dataset-mapping-chip-inactive",
+  ].join(" ");
 }
 
 function asRecord(value: JsonValue | undefined) {
@@ -230,6 +253,18 @@ function getCheckTone(kind: "ok" | "warn" | "error") {
   return "text-rose-800";
 }
 
+function getStepStatusTone(resolved: boolean, active: boolean) {
+  if (active) {
+    return "dataset-stepper-status-active";
+  }
+
+  if (resolved) {
+    return "dataset-stepper-status-complete";
+  }
+
+  return "dataset-stepper-status-pending";
+}
+
 export function DatasetExampleEditor(props: {
   mode: "create" | "edit";
   backHref: string;
@@ -264,6 +299,7 @@ export function DatasetExampleEditor(props: {
   const [inputManualOverride, setInputManualOverride] = useState(props.mode === "edit");
   const [outputManualOverride, setOutputManualOverride] = useState(props.mode === "edit");
   const [showSchema, setShowSchema] = useState(false);
+  const [activeFieldKey, setActiveFieldKey] = useState<string | null>(null);
   const { pushToast } = useToast();
 
   useActionFeedbackToast(state, {
@@ -322,10 +358,9 @@ export function DatasetExampleEditor(props: {
     ? outputPayloadText
     : JSON.stringify(computedOutputPayload, null, 2);
   const sessionNotes = liveSourceSlice.sourceMetadata.session_notes ?? "";
-
-  const resolvedFieldCount = useMemo(() => {
+  const fieldSteps = useMemo<DatasetFieldStep[]>(() => {
     if (!selectedSpec) {
-      return 0;
+      return [];
     }
 
     const fields = [
@@ -333,19 +368,57 @@ export function DatasetExampleEditor(props: {
       ...selectedSpec.outputSchema.map((field) => ({ side: "output" as const, field })),
     ];
 
-    return fields.reduce((count, item) => {
-      const mapping = mappings.find(
-        (current) => current.side === item.side && current.fieldKey === item.field.key,
-      );
+    return fields.flatMap((item, index) => {
+      const mapping =
+        mappings.find(
+          (current) => current.side === item.side && current.fieldKey === item.field.key,
+        ) ?? null;
 
       if (!mapping) {
-        return count;
+        return [];
       }
 
-      const preview = resolveFieldMapping(liveSourceSlice, mapping);
+      return [
+        {
+          side: item.side,
+          field: item.field,
+          mapping,
+          stepKey: `${item.side}:${item.field.key}`,
+          ordinal: index + 1,
+        },
+      ];
+    });
+  }, [mappings, selectedSpec]);
+
+  useEffect(() => {
+    if (fieldSteps.length === 0) {
+      if (activeFieldKey !== null) {
+        setActiveFieldKey(null);
+      }
+      return;
+    }
+
+    if (!activeFieldKey || !fieldSteps.some((step) => step.stepKey === activeFieldKey)) {
+      setActiveFieldKey(fieldSteps[0]?.stepKey ?? null);
+    }
+  }, [activeFieldKey, fieldSteps]);
+
+  const activeStep =
+    fieldSteps.find((step) => step.stepKey === activeFieldKey) ?? fieldSteps[0] ?? null;
+  const activeStepIndex = activeStep
+    ? fieldSteps.findIndex((step) => step.stepKey === activeStep.stepKey)
+    : -1;
+
+  const resolvedFieldCount = useMemo(() => {
+    if (fieldSteps.length === 0) {
+      return 0;
+    }
+
+    return fieldSteps.reduce((count, step) => {
+      const preview = resolveFieldMapping(liveSourceSlice, step.mapping);
       return count + (isMeaningfulValue(preview) ? 1 : 0);
     }, 0);
-  }, [liveSourceSlice, mappings, selectedSpec]);
+  }, [fieldSteps, liveSourceSlice]);
 
   const totalFieldCount =
     (selectedSpec?.inputSchema.length ?? 0) + (selectedSpec?.outputSchema.length ?? 0);
@@ -515,6 +588,7 @@ export function DatasetExampleEditor(props: {
         surroundingContextJson: JSON.stringify(liveSourceSlice.surroundingContext, null, 2),
         inputPayloadJson: JSON.stringify(computedInputPayload, null, 2),
         outputPayloadJson: JSON.stringify(computedOutputPayload, null, 2),
+        llmContextSelection: normalizeDatasetLlmContextSelection(mapping.llmContextSelection),
       });
 
       if (!result.ok) {
@@ -623,37 +697,54 @@ export function DatasetExampleEditor(props: {
     }
   }
 
-  const renderRows = (side: "input" | "output", schema: DatasetSpecOption["inputSchema"]) =>
-    schema.map((field) => {
-      const mapping =
-        mappings.find((item) => item.side === side && item.fieldKey === field.key) ?? null;
+  const renderFieldStep = (step: DatasetFieldStep) => {
+    const { field, mapping, ordinal, side, stepKey } = step;
+    const preview = resolveFieldMapping(liveSourceSlice, mapping);
+    const currentFieldKey = stepKey;
+    const isGenerating = generatingFieldKey === currentFieldKey;
+    const llmGenerationMeta = asRecord(mapping.llmGenerationMeta);
+    const llmContextSelection = normalizeDatasetLlmContextSelection(mapping.llmContextSelection);
+    const selectedLlmConfiguration =
+      props.llmConfigurations.find((configuration) => configuration.id === mapping.llmConfigurationId) ?? null;
+    const llmRequestPreview = buildDatasetFieldGenerationRequestPreview({
+      model: selectedLlmConfiguration?.chatModel ?? null,
+      configurationName: selectedLlmConfiguration?.name ?? null,
+      side,
+      field,
+      datasetSpecName: selectedSpec?.name ?? "",
+      datasetSpecSlug: selectedSpec?.slug ?? "",
+      datasetSpecDescription: selectedSpec?.description ?? "",
+      promptText: mapping.llmPromptText,
+      lastUserMessage: liveSourceSlice.lastUserMessage,
+      sourceSummary: liveSourceSlice.sourceSummary,
+      sessionNotes,
+      conversationSliceJson: JSON.stringify(liveSourceSlice.conversationSlice, null, 2),
+      surroundingContextJson: JSON.stringify(liveSourceSlice.surroundingContext, null, 2),
+      inputPayloadJson: JSON.stringify(computedInputPayload, null, 2),
+      outputPayloadJson: JSON.stringify(computedOutputPayload, null, 2),
+      llmContextSelection,
+    });
+    const llmGeneratedAt = formatDateTime(
+      typeof llmGenerationMeta?.generatedAt === "string"
+        ? llmGenerationMeta.generatedAt
+        : undefined,
+    );
+    const ragGenerationMeta = asRecord(mapping.ragGenerationMeta);
+    const ragGeneratedAt = formatDateTime(
+      typeof ragGenerationMeta?.generatedAt === "string"
+        ? ragGenerationMeta.generatedAt
+        : undefined,
+    );
+    const sourceSnapshot = getSourceSnapshot(mapping.sourceKey, liveSourceSlice);
+    const activeStepLabel = side === "input" ? "Entrada" : "Salida";
+    const totalSteps = fieldSteps.length;
 
-      if (!mapping) {
-        return null;
-      }
-
-      const preview = resolveFieldMapping(liveSourceSlice, mapping);
-      const currentFieldKey = `${side}:${field.key}`;
-      const isGenerating = generatingFieldKey === currentFieldKey;
-      const llmGenerationMeta = asRecord(mapping.llmGenerationMeta);
-      const llmGeneratedAt = formatDateTime(
-        typeof llmGenerationMeta?.generatedAt === "string"
-          ? llmGenerationMeta.generatedAt
-          : undefined,
-      );
-      const ragGenerationMeta = asRecord(mapping.ragGenerationMeta);
-      const ragGeneratedAt = formatDateTime(
-        typeof ragGenerationMeta?.generatedAt === "string"
-          ? ragGenerationMeta.generatedAt
-          : undefined,
-      );
-      const sourceSnapshot = getSourceSnapshot(mapping.sourceKey, liveSourceSlice);
-
-      return (
-        <article key={currentFieldKey} className="dataset-mapping-card">
+    return (
+      <article key={currentFieldKey} className="dataset-mapping-card">
           <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
             <div className="space-y-3">
               <div className="flex flex-wrap items-center gap-2">
+                <span className="dataset-stepper-card-index">Paso {ordinal}</span>
                 <p className="text-[1.05rem] font-semibold tracking-[-0.02em] text-[var(--foreground)]">
                   {field.key}
                 </p>
@@ -664,6 +755,9 @@ export function DatasetExampleEditor(props: {
                 )}
                 {renderBadge(field.type)}
               </div>
+              <p className="dataset-mapping-eyebrow">
+                {activeStepLabel} {ordinal} de {totalSteps}
+              </p>
               <p className="max-w-3xl text-sm leading-6 text-[var(--muted)]">
                 {field.description || "Sin descripcion."}
               </p>
@@ -830,12 +924,34 @@ export function DatasetExampleEditor(props: {
                     <div className="dataset-mapping-mini-panel">
                       <p className="dataset-mapping-eyebrow">Contexto enviado</p>
                       <div className="mt-3 flex flex-wrap gap-2">
-                        <span className="dataset-mapping-chip">ultimo mensaje</span>
-                        <span className="dataset-mapping-chip">resumen</span>
-                        <span className="dataset-mapping-chip">notas</span>
-                        <span className="dataset-mapping-chip">transcript</span>
-                        <span className="dataset-mapping-chip">payload actual</span>
+                        {DATASET_LLM_CONTEXT_KEYS.map((contextKey) => {
+                          const active = llmContextSelection[contextKey];
+
+                          return (
+                            <button
+                              key={contextKey}
+                              type="button"
+                              className={renderContextChipClassName(active)}
+                              onClick={() => {
+                                updateMapping(side, field.key, (current) => ({
+                                  ...current,
+                                  llmContextSelection: {
+                                    ...normalizeDatasetLlmContextSelection(current.llmContextSelection),
+                                    [contextKey]: !active,
+                                  },
+                                }));
+                              }}
+                              aria-pressed={active}
+                              title={active ? "Quitar del request" : "Incluir en el request"}
+                            >
+                              {DATASET_LLM_CONTEXT_LABELS[contextKey]}
+                            </button>
+                          );
+                        })}
                       </div>
+                      <p className="mt-3 text-xs leading-6 text-[var(--muted)]">
+                        La informacion del campo y del spec siempre se manda. Aqui solo decides que contexto adicional entra al request.
+                      </p>
                     </div>
                   </div>
 
@@ -856,6 +972,18 @@ export function DatasetExampleEditor(props: {
                       placeholder="Resume los hechos clave y devuelve solo el valor util para este campo."
                     />
                   </label>
+
+                  <details className="dataset-mapping-mini-panel mt-4">
+                    <summary className="cursor-pointer list-none text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-[var(--muted-strong)]">
+                      Preview del request al modelo
+                    </summary>
+                    <p className="mt-3 text-xs leading-6 text-[var(--muted)]">
+                      En esta ruta no se aplica el prompt global de la configuracion LLM; se usa solo la instruccion del campo y el contexto seleccionado.
+                    </p>
+                    <pre className="mt-4 whitespace-pre-wrap break-words rounded-[0.9rem] border border-[var(--line)] bg-white/75 p-4 text-xs leading-6 text-[var(--muted-strong)]">
+                      {prettyJson(llmRequestPreview)}
+                    </pre>
+                  </details>
 
                   <label className="mt-4 block space-y-2">
                     <FormLabel className="dataset-mapping-control-label">Resultado generado</FormLabel>
@@ -912,6 +1040,9 @@ export function DatasetExampleEditor(props: {
                         <p>
                           Modelo: {typeof llmGenerationMeta.model === "string" ? llmGenerationMeta.model : "No disponible"}
                         </p>
+                        {typeof llmGenerationMeta.systemPromptApplied === "boolean" ? (
+                          <p>Prompt global aplicado: {llmGenerationMeta.systemPromptApplied ? "si" : "no"}</p>
+                        ) : null}
                         {llmGeneratedAt ? <p>Generado: {llmGeneratedAt}</p> : null}
                         {typeof llmGenerationMeta.confidence === "number" ? (
                           <p>Confianza estimada: {Math.round(llmGenerationMeta.confidence * 100)}%</p>
@@ -1182,9 +1313,9 @@ export function DatasetExampleEditor(props: {
               </section>
             </aside>
           </div>
-        </article>
-      );
-    });
+      </article>
+    );
+  };
 
   return (
     <form action={formAction} className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
@@ -1449,35 +1580,138 @@ export function DatasetExampleEditor(props: {
 
             <div className="h-full overflow-y-auto px-5 py-6 sm:px-6">
               {selectedSpec ? (
-                <div className="space-y-8 pb-24">
-                  <div className="space-y-4">
-                    {selectedSpec.inputSchema.length > 0 ? (
+                fieldSteps.length > 0 && activeStep ? (
+                  <div className="space-y-6 pb-24">
+                    <section className="dataset-stepper-summary">
                       <div>
-                        <p className="font-[var(--font-editorial)] text-xl font-semibold text-[var(--foreground)]">
-                          Input
-                        </p>
-                        <p className="mt-1 text-sm text-[var(--muted)]">
-                          Campos que alimentan la firma de entrada.
+                        <p className="dataset-mapping-eyebrow">Pipeline dinamico del dataspec</p>
+                        <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
+                          Cada paso se construye segun los campos definidos por el spec activo.
+                          Navega uno por uno para curar el example con menos ruido visual.
                         </p>
                       </div>
-                    ) : null}
-                    {renderRows("input", selectedSpec.inputSchema)}
-                  </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        {renderBadge(`${fieldSteps.length} pasos`, "accent")}
+                        {renderBadge(`${resolvedFieldCount}/${fieldSteps.length} resueltos`)}
+                        {renderBadge(
+                          activeStep.side === "input" ? "trabajando entrada" : "trabajando salida",
+                          "warm",
+                        )}
+                      </div>
+                    </section>
 
-                  <div className="space-y-4">
-                    {selectedSpec.outputSchema.length > 0 ? (
-                      <div>
-                        <p className="font-[var(--font-editorial)] text-xl font-semibold text-[var(--foreground)]">
-                          Output
-                        </p>
-                        <p className="mt-1 text-sm text-[var(--muted)]">
-                          Campos que definen la respuesta o etiqueta final del dataset.
-                        </p>
+                    <div className="dataset-stepper-shell">
+                      <aside className="dataset-stepper-rail xl:sticky xl:top-24 xl:self-start">
+                        <div className="dataset-stepper-rail-header">
+                          <div>
+                            <p className="dataset-mapping-eyebrow">Steps</p>
+                            <p className="mt-2 text-sm text-[var(--muted)]">
+                              El orden sigue el schema activo.
+                            </p>
+                          </div>
+                          <span className="dataset-stepper-progress-text">
+                            Paso {activeStep.ordinal} de {fieldSteps.length}
+                          </span>
+                        </div>
+
+                        <div className="dataset-stepper-list">
+                          {fieldSteps.map((step) => {
+                            const resolved = isMeaningfulValue(
+                              resolveFieldMapping(liveSourceSlice, step.mapping),
+                            );
+                            const isActive = activeStep.stepKey === step.stepKey;
+
+                            return (
+                              <button
+                                key={step.stepKey}
+                                type="button"
+                                className={[
+                                  "dataset-stepper-button",
+                                  isActive ? "dataset-stepper-button-active" : "",
+                                ]
+                                  .filter(Boolean)
+                                  .join(" ")}
+                                onClick={() => setActiveFieldKey(step.stepKey)}
+                                aria-pressed={isActive}
+                              >
+                                <span className="dataset-stepper-button-top">
+                                  <span className="dataset-stepper-index">{step.ordinal}</span>
+                                  <span
+                                    className={`dataset-stepper-status ${getStepStatusTone(resolved, isActive)}`}
+                                  >
+                                    {isActive ? "Actual" : resolved ? "Listo" : "Pendiente"}
+                                  </span>
+                                </span>
+                                <span className="dataset-stepper-button-body">
+                                  <span className="dataset-stepper-field-name">{step.field.key}</span>
+                                  <span className="dataset-stepper-field-meta">
+                                    {step.side === "input" ? "Input" : "Output"} ·{" "}
+                                    {SOURCE_BADGES[step.mapping.sourceKey]}
+                                  </span>
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </aside>
+
+                      <div className="space-y-5">
+                        <section className="dataset-stepper-summary">
+                          <div>
+                            <p className="dataset-mapping-eyebrow">Campo activo</p>
+                            <h2 className="mt-2 font-[var(--font-editorial)] text-2xl font-semibold text-[var(--foreground)]">
+                              {activeStep.field.key}
+                            </h2>
+                            <p className="mt-1 text-sm text-[var(--muted)]">
+                              {activeStep.field.description || "Sin descripcion para este campo."}
+                            </p>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            {renderBadge(activeStep.side, "accent")}
+                            {renderBadge(activeStep.field.type)}
+                            {renderBadge(
+                              activeStep.field.required ? "required" : "optional",
+                              activeStep.field.required ? "warm" : "neutral",
+                            )}
+                          </div>
+                        </section>
+
+                        <div className="flex flex-wrap items-center justify-between gap-3 rounded-[1.1rem] border border-[var(--line)] bg-white/70 px-4 py-3">
+                          <div className="text-sm text-[var(--muted)]">
+                            Paso actual:{" "}
+                            <span className="font-medium text-[var(--foreground)]">
+                              {activeStep.ordinal}/{fieldSteps.length}
+                            </span>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <button
+                              type="button"
+                              className="button-secondary"
+                              onClick={() => setActiveFieldKey(fieldSteps[activeStepIndex - 1]?.stepKey ?? null)}
+                              disabled={activeStepIndex <= 0}
+                            >
+                              Anterior
+                            </button>
+                            <button
+                              type="button"
+                              className="button-primary"
+                              onClick={() => setActiveFieldKey(fieldSteps[activeStepIndex + 1]?.stepKey ?? null)}
+                              disabled={activeStepIndex < 0 || activeStepIndex >= fieldSteps.length - 1}
+                            >
+                              Siguiente
+                            </button>
+                          </div>
+                        </div>
+
+                        {renderFieldStep(activeStep)}
                       </div>
-                    ) : null}
-                    {renderRows("output", selectedSpec.outputSchema)}
+                    </div>
                   </div>
-                </div>
+                ) : (
+                  <div className="rounded-[1.25rem] border border-[var(--line)] bg-white/80 p-6 text-sm text-[var(--muted)]">
+                    Este dataset spec no define campos renderizables para el pipeline del example.
+                  </div>
+                )
               ) : (
                 <div className="rounded-[1.25rem] border border-[var(--line)] bg-white/80 p-6 text-sm text-[var(--muted)]">
                   No hay dataset specs activos para construir este example.
