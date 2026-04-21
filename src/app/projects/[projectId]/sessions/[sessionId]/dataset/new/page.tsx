@@ -97,7 +97,7 @@ export default async function NewDatasetExamplePage({
           id: true,
           name: true,
           collectionName: true,
-          queryModel: true,
+          embeddingModel: true,
           updatedAt: true,
         },
       }),
@@ -160,7 +160,7 @@ export default async function NewDatasetExamplePage({
         id: configuration.id,
         name: configuration.name,
         collectionName: configuration.collectionName,
-        queryModel: configuration.queryModel,
+        embeddingModel: configuration.embeddingModel,
         updatedAt: configuration.updatedAt.toISOString(),
       }))}
       initialDatasetSpecId={selectedDatasetSpec?.id ?? ""}

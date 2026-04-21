@@ -76,35 +76,74 @@ async function parseQdrantResponse(response: Response) {
   return responseJson;
 }
 
-export async function queryQdrantTopPoint(input: {
+export async function testQdrantConnection(input: {
   baseUrl: string;
   apiKey?: string | null;
   collectionName: string;
-  queryText: string;
-  vectorName?: string | null;
-  queryModel?: string | null;
-  payloadPath?: string | null;
 }) {
   const collectionName = input.collectionName.trim();
-  const queryText = input.queryText.trim();
 
   if (!collectionName) {
     throw new Error("Define una colección de Qdrant.");
   }
 
-  if (!queryText) {
+  const headers = new Headers();
+
+  if (input.apiKey?.trim()) {
+    headers.set("api-key", input.apiKey.trim());
+  }
+
+  await parseQdrantResponse(
+    await fetch(
+      `${normalizeQdrantBaseUrl(input.baseUrl)}/collections/${encodeURIComponent(collectionName)}`,
+      {
+        method: "GET",
+        headers,
+        cache: "no-store",
+      },
+    ),
+  );
+
+  return {
+    ok: true as const,
+    collectionName,
+  };
+}
+
+export async function queryQdrantTopPoint(input: {
+  baseUrl: string;
+  apiKey?: string | null;
+  collectionName: string;
+  queryText?: string;
+  vectorName?: string | null;
+  queryModel?: string | null;
+  queryVector?: number[] | null;
+  payloadPath?: string | null;
+}) {
+  const collectionName = input.collectionName.trim();
+  const queryText = input.queryText?.trim() ?? "";
+  const queryVector = input.queryVector?.filter((value) => Number.isFinite(value)) ?? [];
+
+  if (!collectionName) {
+    throw new Error("Define una colección de Qdrant.");
+  }
+
+  if (!queryText && queryVector.length === 0) {
     throw new Error("La consulta RAG no puede estar vacía.");
   }
 
   const body: Record<string, unknown> = {
     limit: 1,
     with_payload: true,
-    query: input.queryModel?.trim()
-      ? {
-          text: queryText,
-          model: input.queryModel.trim(),
-        }
-      : queryText,
+    query:
+      queryVector.length > 0
+        ? queryVector
+        : input.queryModel?.trim()
+          ? {
+              text: queryText,
+              model: input.queryModel.trim(),
+            }
+          : queryText,
   };
 
   if (input.vectorName?.trim()) {

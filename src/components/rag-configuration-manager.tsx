@@ -1,13 +1,15 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useRef, useState } from "react";
 import {
   createRagConfigurationWithFeedback,
   deleteRagConfigurationWithFeedback,
+  testRagConfigurationConnection,
   updateRagConfigurationWithFeedback,
 } from "@/app/actions";
 import { FormLabel } from "@/components/form-label";
 import { FormSubmitButton } from "@/components/form-submit-button";
+import { useToast } from "@/components/toast-provider";
 import { useActionFeedbackToast } from "@/components/use-action-feedback-toast";
 import { EMPTY_ACTION_FORM_STATE } from "@/lib/form-state";
 import { formatDate } from "@/lib/utils";
@@ -19,7 +21,9 @@ type RagConfigurationItem = {
   qdrantApiKey: string;
   collectionName: string;
   vectorName: string;
-  queryModel: string;
+  embeddingBaseUrl: string;
+  embeddingApiKey: string;
+  embeddingModel: string;
   payloadPath: string;
   createdAt: string;
   updatedAt: string;
@@ -30,6 +34,9 @@ export function RagConfigurationManager({
 }: {
   configurations: RagConfigurationItem[];
 }) {
+  const createFormRef = useRef<HTMLFormElement>(null);
+  const { pushToast } = useToast();
+  const [isTestingCreateConnection, setIsTestingCreateConnection] = useState(false);
   const [createState, createAction] = useActionState(
     createRagConfigurationWithFeedback,
     EMPTY_ACTION_FORM_STATE,
@@ -40,6 +47,61 @@ export function RagConfigurationManager({
     successTitle: "Configuración RAG guardada",
   });
 
+  async function handleCreateConnectionTest() {
+    if (isTestingCreateConnection) {
+      return;
+    }
+
+    const formElement = createFormRef.current;
+
+    if (!formElement) {
+      return;
+    }
+
+    const formData = new FormData(formElement);
+
+    setIsTestingCreateConnection(true);
+
+    try {
+      const result = await testRagConfigurationConnection({
+        qdrantBaseUrl: String(formData.get("qdrantBaseUrl") ?? ""),
+        qdrantApiKey: String(formData.get("qdrantApiKey") ?? ""),
+        collectionName: String(formData.get("collectionName") ?? ""),
+        vectorName: String(formData.get("vectorName") ?? ""),
+        embeddingBaseUrl: String(formData.get("embeddingBaseUrl") ?? ""),
+        embeddingApiKey: String(formData.get("embeddingApiKey") ?? ""),
+        embeddingModel: String(formData.get("embeddingModel") ?? ""),
+        payloadPath: String(formData.get("payloadPath") ?? ""),
+      });
+
+      if (!result.ok) {
+        pushToast({
+          title: "Conexión no verificada",
+          description: result.error,
+          variant: "error",
+          durationMs: 8000,
+        });
+        return;
+      }
+
+      pushToast({
+        title: "Conexión verificada",
+        description: result.message,
+        variant: "success",
+        durationMs: 5000,
+      });
+    } catch {
+      pushToast({
+        title: "Conexión no verificada",
+        description: "No fue posible comprobar la conexión con Qdrant.",
+        variant: "error",
+        durationMs: 8000,
+      });
+    } finally {
+      setIsTestingCreateConnection(false);
+    }
+  }
+
   return (
     <section className="surface rounded-[2.5rem] px-6 py-8 sm:px-8 lg:px-10">
       <div className="grid gap-8 xl:grid-cols-[340px_minmax(0,1fr)]">
@@ -49,11 +111,12 @@ export function RagConfigurationManager({
               Retrieval Config
             </h2>
             <p className="mt-4 max-w-sm text-sm leading-7 text-[var(--muted)]">
-              Registra conexiones reutilizables hacia Qdrant para poblar campos con RAG usando siempre el primer resultado disponible.
+              Registra conexiones reutilizables para consultar Qdrant con embeddings generados desde un proveedor OpenAI-compatible.
             </p>
           </div>
 
           <form
+            ref={createFormRef}
             action={createAction}
             className="rounded-[1.8rem] border border-[var(--line)] bg-white/82 p-5 shadow-[0_16px_36px_rgba(24,35,47,0.08)] sm:p-6"
           >
@@ -67,7 +130,7 @@ export function RagConfigurationManager({
               </div>
               <div>
                 <h3 className="text-base font-semibold text-[var(--foreground)]">New Retrieval</h3>
-                <p className="text-xs uppercase tracking-[0.22em] text-[var(--muted)]">Register Qdrant access</p>
+                <p className="text-xs uppercase tracking-[0.22em] text-[var(--muted)]">Register vector store access</p>
               </div>
             </div>
 
@@ -103,12 +166,22 @@ export function RagConfigurationManager({
               </label>
               <label className="block space-y-2">
                 <FormLabel className="text-[0.68rem] uppercase tracking-[0.22em] text-[var(--muted)]">
-                  Query Model
+                  Embeddings URL
                 </FormLabel>
                 <input
-                  name="queryModel"
+                  name="embeddingBaseUrl"
+                  className="field mono rounded-[1rem]"
+                  placeholder="https://api.openai.com/v1"
+                />
+              </label>
+              <label className="block space-y-2">
+                <FormLabel className="text-[0.68rem] uppercase tracking-[0.22em] text-[var(--muted)]">
+                  Embedding Model
+                </FormLabel>
+                <input
+                  name="embeddingModel"
                   className="field rounded-[1rem]"
-                  placeholder="qdrant/bm25 o openai/text-embedding-3-small"
+                  placeholder="text-embedding-3-small"
                 />
               </label>
               <label className="block space-y-2">
@@ -119,17 +192,43 @@ export function RagConfigurationManager({
               </label>
               <label className="block space-y-2">
                 <FormLabel className="text-[0.68rem] uppercase tracking-[0.22em] text-[var(--muted)]">
-                  API Key
+                  Qdrant API Key
                 </FormLabel>
                 <input name="qdrantApiKey" type="password" className="field mono rounded-[1rem]" placeholder="Opcional" />
               </label>
-              <FormSubmitButton
-                type="submit"
-                className="button-primary inline-flex w-full items-center justify-center px-5 py-3 text-sm uppercase tracking-[0.18em]"
-                pendingLabel="Guardando configuración..."
-              >
-                Register Retrieval
-              </FormSubmitButton>
+              <label className="block space-y-2">
+                <FormLabel className="text-[0.68rem] uppercase tracking-[0.22em] text-[var(--muted)]">
+                  Embeddings API Key
+                </FormLabel>
+                <input
+                  name="embeddingApiKey"
+                  type="password"
+                  className="field mono rounded-[1rem]"
+                  placeholder="Bearer token opcional"
+                />
+              </label>
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={handleCreateConnectionTest}
+                    disabled={isTestingCreateConnection}
+                    className="button-secondary inline-flex flex-1 items-center justify-center px-5 py-3 text-sm uppercase tracking-[0.16em] disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {isTestingCreateConnection ? "Probando..." : "Probar conexión"}
+                  </button>
+                  <FormSubmitButton
+                    type="submit"
+                    className="button-primary inline-flex flex-1 items-center justify-center px-5 py-3 text-sm uppercase tracking-[0.18em]"
+                    pendingLabel="Guardando configuración..."
+                  >
+                    Register Retrieval
+                  </FormSubmitButton>
+                </div>
+                <p className="text-xs leading-6 text-[var(--muted)]">
+                  La prueba valida el proveedor de embeddings, la colección de Qdrant y una consulta vectorial real.
+                </p>
+              </div>
             </div>
           </form>
         </div>
@@ -164,13 +263,17 @@ function EditableRagConfigurationCard({
 }: {
   configuration: RagConfigurationItem;
 }) {
+  const { pushToast } = useToast();
   const [name, setName] = useState(configuration.name);
   const [qdrantBaseUrl, setQdrantBaseUrl] = useState(configuration.qdrantBaseUrl);
   const [qdrantApiKey, setQdrantApiKey] = useState(configuration.qdrantApiKey);
   const [collectionName, setCollectionName] = useState(configuration.collectionName);
   const [vectorName, setVectorName] = useState(configuration.vectorName);
-  const [queryModel, setQueryModel] = useState(configuration.queryModel);
+  const [embeddingBaseUrl, setEmbeddingBaseUrl] = useState(configuration.embeddingBaseUrl);
+  const [embeddingApiKey, setEmbeddingApiKey] = useState(configuration.embeddingApiKey);
+  const [embeddingModel, setEmbeddingModel] = useState(configuration.embeddingModel);
   const [payloadPath, setPayloadPath] = useState(configuration.payloadPath);
+  const [isTestingConnection, setIsTestingConnection] = useState(false);
   const [updateState, updateAction] = useActionState(
     updateRagConfigurationWithFeedback.bind(null, configuration.id),
     EMPTY_ACTION_FORM_STATE,
@@ -188,6 +291,53 @@ function EditableRagConfigurationCard({
     errorTitle: "No fue posible eliminar la configuración",
     successTitle: "Configuración RAG eliminada",
   });
+
+  async function handleTestConnection() {
+    if (isTestingConnection) {
+      return;
+    }
+
+    setIsTestingConnection(true);
+
+    try {
+      const result = await testRagConfigurationConnection({
+        qdrantBaseUrl,
+        qdrantApiKey,
+        collectionName,
+        vectorName,
+        embeddingBaseUrl,
+        embeddingApiKey,
+        embeddingModel,
+        payloadPath,
+      });
+
+      if (!result.ok) {
+        pushToast({
+          title: "Conexión no verificada",
+          description: result.error,
+          variant: "error",
+          durationMs: 8000,
+        });
+        return;
+      }
+
+      pushToast({
+        title: "Conexión verificada",
+        description: result.message,
+        variant: "success",
+        durationMs: 5000,
+      });
+    } catch {
+      pushToast({
+        title: "Conexión no verificada",
+        description: "No fue posible comprobar la conexión con Qdrant.",
+        variant: "error",
+        durationMs: 8000,
+      });
+    } finally {
+      setIsTestingConnection(false);
+    }
+  }
 
   return (
     <article className="rounded-[1.8rem] border border-[var(--line)] bg-white/84 p-5 shadow-[0_16px_36px_rgba(24,35,47,0.08)] sm:p-6">
@@ -215,7 +365,10 @@ function EditableRagConfigurationCard({
             Created {formatDate(configuration.createdAt)}
           </span>
           <span className="rounded-full border border-[var(--line)] bg-[var(--background)] px-3 py-1">
-            API key {configuration.qdrantApiKey ? "set" : "empty"}
+            Qdrant key {configuration.qdrantApiKey ? "set" : "empty"}
+          </span>
+          <span className="rounded-full border border-[var(--line)] bg-[var(--background)] px-3 py-1">
+            Embeddings {configuration.embeddingModel ? "set" : "missing"}
           </span>
           <span className="rounded-full border border-[var(--line)] bg-[var(--background)] px-3 py-1">
             Top K fixed at 1
@@ -267,13 +420,24 @@ function EditableRagConfigurationCard({
         </label>
         <label className="block space-y-2">
           <FormLabel className="text-[0.68rem] uppercase tracking-[0.22em] text-[var(--muted)]">
-            Query Model
+            Embeddings URL
           </FormLabel>
           <input
-            name="queryModel"
+            name="embeddingBaseUrl"
+            className="field mono"
+            value={embeddingBaseUrl}
+            onChange={(event) => setEmbeddingBaseUrl(event.target.value)}
+          />
+        </label>
+        <label className="block space-y-2">
+          <FormLabel className="text-[0.68rem] uppercase tracking-[0.22em] text-[var(--muted)]">
+            Embedding Model
+          </FormLabel>
+          <input
+            name="embeddingModel"
             className="field"
-            value={queryModel}
-            onChange={(event) => setQueryModel(event.target.value)}
+            value={embeddingModel}
+            onChange={(event) => setEmbeddingModel(event.target.value)}
           />
         </label>
         <label className="block space-y-2">
@@ -289,7 +453,7 @@ function EditableRagConfigurationCard({
         </label>
         <label className="block space-y-2">
           <FormLabel className="text-[0.68rem] uppercase tracking-[0.22em] text-[var(--muted)]">
-            API Key
+            Qdrant API Key
           </FormLabel>
           <input
             name="qdrantApiKey"
@@ -299,8 +463,28 @@ function EditableRagConfigurationCard({
             onChange={(event) => setQdrantApiKey(event.target.value)}
           />
         </label>
+        <label className="block space-y-2">
+          <FormLabel className="text-[0.68rem] uppercase tracking-[0.22em] text-[var(--muted)]">
+            Embeddings API Key
+          </FormLabel>
+          <input
+            name="embeddingApiKey"
+            type="password"
+            className="field mono"
+            value={embeddingApiKey}
+            onChange={(event) => setEmbeddingApiKey(event.target.value)}
+          />
+        </label>
 
         <div className="md:col-span-2 flex flex-wrap items-center gap-3 pt-1">
+          <button
+            type="button"
+            onClick={handleTestConnection}
+            disabled={isTestingConnection}
+            className="button-secondary inline-flex items-center justify-center px-5 py-3 text-sm uppercase tracking-[0.16em] disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isTestingConnection ? "Probando..." : "Probar conexión"}
+          </button>
           <FormSubmitButton
             type="submit"
             className="button-secondary inline-flex items-center justify-center px-5 py-3 text-sm uppercase tracking-[0.16em]"

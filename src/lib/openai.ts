@@ -19,6 +19,17 @@ export function isOpenAICompatibleModeEnabled() {
 }
 
 export function normalizeChatBaseUrl(value: string | null | undefined) {
+  return normalizeOpenAICompatibleBaseUrl(value, "chat");
+}
+
+export function normalizeEmbeddingBaseUrl(value: string | null | undefined) {
+  return normalizeOpenAICompatibleBaseUrl(value, "embeddings");
+}
+
+function normalizeOpenAICompatibleBaseUrl(
+  value: string | null | undefined,
+  target: "chat" | "embeddings",
+) {
   const trimmedValue = value?.trim();
 
   if (!trimmedValue) {
@@ -30,11 +41,19 @@ export function normalizeChatBaseUrl(value: string | null | undefined) {
   try {
     parsedUrl = new URL(trimmedValue);
   } catch {
-    throw new Error("Define una URL valida para el backend del chat.");
+    throw new Error(
+      target === "chat"
+        ? "Define una URL valida para el backend del chat."
+        : "Define una URL valida para el backend de embeddings.",
+    );
   }
 
   if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
-    throw new Error("La URL del chat debe usar http o https.");
+    throw new Error(
+      target === "chat"
+        ? "La URL del chat debe usar http o https."
+        : "La URL de embeddings debe usar http o https.",
+    );
   }
 
   parsedUrl.hash = "";
@@ -186,6 +205,38 @@ function normalizeModel(value: string) {
   return value.trim();
 }
 
+function parseEmbeddingVector(responseJson: Record<string, unknown> | null, model: string) {
+  const firstItem =
+    responseJson &&
+    typeof responseJson === "object" &&
+    "data" in responseJson &&
+    Array.isArray(responseJson.data)
+      ? responseJson.data[0]
+      : null;
+
+  const embedding =
+    firstItem &&
+    typeof firstItem === "object" &&
+    "embedding" in firstItem &&
+    Array.isArray(firstItem.embedding)
+      ? firstItem.embedding
+      : null;
+
+  if (!embedding || embedding.length === 0) {
+    throw new Error(`El proveedor respondió, pero no devolvió un embedding para "${model}".`);
+  }
+
+  const vector = embedding.map((value: unknown) => {
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+      throw new Error(`El proveedor devolvió un embedding inválido para "${model}".`);
+    }
+
+    return value;
+  });
+
+  return vector;
+}
+
 export async function testChatConnection(input: {
   model: string;
   baseUrl?: string | null;
@@ -234,6 +285,47 @@ export async function testChatConnection(input: {
     ok: true as const,
     model,
     listedModels,
+  };
+}
+
+export async function createEmbedding(input: {
+  model: string;
+  text: string;
+  baseUrl?: string | null;
+  apiKey?: string | null;
+}) {
+  const model = normalizeModel(input.model);
+  const text = input.text.trim();
+  const baseUrl = normalizeEmbeddingBaseUrl(input.baseUrl);
+  const apiKey = normalizeChatApiKey(input.apiKey);
+
+  if (!model) {
+    throw new Error("Define un modelo de embeddings antes de consultar Qdrant.");
+  }
+
+  if (!text) {
+    throw new Error("La consulta para embeddings no puede estar vacía.");
+  }
+
+  const responseJson = await fetchOpenAIJson(
+    "/embeddings",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        model,
+        input: text,
+      }),
+    },
+    {
+      baseUrl,
+      apiKey,
+    },
+  );
+
+  return {
+    ok: true as const,
+    model,
+    vector: parseEmbeddingVector(responseJson, model),
   };
 }
 

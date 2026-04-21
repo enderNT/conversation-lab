@@ -49,7 +49,7 @@ type GlobalRagConfigurationOption = {
   id: string;
   name: string;
   collectionName: string;
-  queryModel: string | null;
+  embeddingModel: string | null;
   updatedAt: string;
 };
 
@@ -971,7 +971,7 @@ export function DatasetExampleEditor(props: {
                       <div>
                         <p className="dataset-mapping-eyebrow">Configuracion global RAG</p>
                         <p className="text-sm text-[var(--muted)]">
-                          Selecciona Qdrant, define la instruccion de recuperacion y usa siempre el top 1.
+                          Selecciona el vector store, define la instruccion y consulta Qdrant usando embeddings externos.
                         </p>
                       </div>
                     </div>
@@ -998,7 +998,7 @@ export function DatasetExampleEditor(props: {
                         {props.ragConfigurations.map((configuration) => (
                           <option key={configuration.id} value={configuration.id}>
                             {configuration.name} · {configuration.collectionName}
-                            {configuration.queryModel ? ` · ${configuration.queryModel}` : ""}
+                            {configuration.embeddingModel ? ` · ${configuration.embeddingModel}` : ""}
                           </option>
                         ))}
                       </select>
@@ -1009,6 +1009,7 @@ export function DatasetExampleEditor(props: {
                       <div className="mt-3 flex flex-wrap gap-2">
                         <span className="dataset-mapping-chip">top k 1</span>
                         <span className="dataset-mapping-chip">qdrant</span>
+                        <span className="dataset-mapping-chip">embeddings</span>
                         <span className="dataset-mapping-chip">transcript</span>
                         <span className="dataset-mapping-chip">payload actual</span>
                       </div>
@@ -1088,8 +1089,8 @@ export function DatasetExampleEditor(props: {
                         <p>
                           Coleccion: {typeof ragGenerationMeta.collectionName === "string" ? ragGenerationMeta.collectionName : "No disponible"}
                         </p>
-                        {typeof ragGenerationMeta.queryModel === "string" && ragGenerationMeta.queryModel.trim() ? (
-                          <p>Modelo de query: {ragGenerationMeta.queryModel}</p>
+                        {typeof ragGenerationMeta.embeddingModel === "string" && ragGenerationMeta.embeddingModel.trim() ? (
+                          <p>Modelo de embeddings: {ragGenerationMeta.embeddingModel}</p>
                         ) : null}
                         {ragGeneratedAt ? <p>Consultado: {ragGeneratedAt}</p> : null}
                         {typeof ragGenerationMeta.score === "number" ? (
@@ -1410,7 +1411,7 @@ export function DatasetExampleEditor(props: {
                       props.ragConfigurations.slice(0, 4).map((configuration) => (
                         <p key={configuration.id}>
                           {configuration.name} · {configuration.collectionName}
-                          {configuration.queryModel ? ` · ${configuration.queryModel}` : ""}
+                          {configuration.embeddingModel ? ` · ${configuration.embeddingModel}` : ""}
                         </p>
                       ))
                     )}

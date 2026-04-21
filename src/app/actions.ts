@@ -39,11 +39,17 @@ import {
 } from "@/lib/datasets";
 import { ensureDefaultDatasetSpecs } from "@/lib/dataset-specs";
 import {
+  createEmbedding,
   generateAssistantReply,
   normalizeChatBaseUrl,
+  normalizeEmbeddingBaseUrl,
   testChatConnection as testOpenAIChatConnection,
 } from "@/lib/openai";
-import { normalizeQdrantBaseUrl, queryQdrantTopPoint } from "@/lib/qdrant";
+import {
+  normalizeQdrantBaseUrl,
+  queryQdrantTopPoint,
+  testQdrantConnection,
+} from "@/lib/qdrant";
 import type { ActionFormState } from "@/lib/form-state";
 import { prisma } from "@/lib/prisma";
 import {
@@ -107,7 +113,20 @@ const ragConfigurationSchema = z.object({
   qdrantApiKey: z.string().default(""),
   collectionName: z.string().trim().min(1, "Define la colección a consultar."),
   vectorName: z.string().default(""),
-  queryModel: z.string().default(""),
+  embeddingBaseUrl: z.string().default(""),
+  embeddingApiKey: z.string().default(""),
+  embeddingModel: z.string().default(""),
+  payloadPath: z.string().default(""),
+});
+
+const ragConnectionTestSchema = z.object({
+  qdrantBaseUrl: z.string().trim().min(1, "Define la URL base de Qdrant."),
+  qdrantApiKey: z.string().default(""),
+  collectionName: z.string().trim().min(1, "Define la colección a consultar."),
+  vectorName: z.string().default(""),
+  embeddingBaseUrl: z.string().default(""),
+  embeddingApiKey: z.string().default(""),
+  embeddingModel: z.string().default(""),
   payloadPath: z.string().default(""),
 });
 
@@ -587,7 +606,9 @@ function normalizeRagConfigurationInput(input: z.infer<typeof ragConfigurationSc
     qdrantApiKey: input.qdrantApiKey.trim() || null,
     collectionName: input.collectionName.trim(),
     vectorName: input.vectorName.trim() || null,
-    queryModel: input.queryModel.trim() || null,
+    embeddingBaseUrl: normalizeEmbeddingBaseUrl(input.embeddingBaseUrl),
+    embeddingApiKey: input.embeddingApiKey.trim() || null,
+    embeddingModel: input.embeddingModel.trim() || null,
     payloadPath: input.payloadPath.trim() || null,
   };
 }
@@ -834,7 +855,9 @@ export async function createRagConfigurationWithFeedback(
     qdrantApiKey: asOptionalString(formData.get("qdrantApiKey")),
     collectionName: asOptionalString(formData.get("collectionName")),
     vectorName: asOptionalString(formData.get("vectorName")),
-    queryModel: asOptionalString(formData.get("queryModel")),
+    embeddingBaseUrl: asOptionalString(formData.get("embeddingBaseUrl")),
+    embeddingApiKey: asOptionalString(formData.get("embeddingApiKey")),
+    embeddingModel: asOptionalString(formData.get("embeddingModel")),
     payloadPath: asOptionalString(formData.get("payloadPath")),
   });
 
@@ -872,7 +895,9 @@ export async function updateRagConfigurationWithFeedback(
     qdrantApiKey: asOptionalString(formData.get("qdrantApiKey")),
     collectionName: asOptionalString(formData.get("collectionName")),
     vectorName: asOptionalString(formData.get("vectorName")),
-    queryModel: asOptionalString(formData.get("queryModel")),
+    embeddingBaseUrl: asOptionalString(formData.get("embeddingBaseUrl")),
+    embeddingApiKey: asOptionalString(formData.get("embeddingApiKey")),
+    embeddingModel: asOptionalString(formData.get("embeddingModel")),
     payloadPath: asOptionalString(formData.get("payloadPath")),
   });
 
@@ -919,6 +944,87 @@ export async function deleteRagConfigurationWithFeedback(
   revalidatePath("/");
 
   return buildActionRefreshSuccessState("Configuración RAG eliminada correctamente.");
+}
+
+export async function testRagConfigurationConnection(input: {
+  qdrantBaseUrl: string;
+  qdrantApiKey: string;
+  collectionName: string;
+  vectorName: string;
+  embeddingBaseUrl: string;
+  embeddingApiKey: string;
+  embeddingModel: string;
+  payloadPath: string;
+}) {
+  const parsed = ragConnectionTestSchema.safeParse({
+    qdrantBaseUrl: input.qdrantBaseUrl,
+    qdrantApiKey: input.qdrantApiKey,
+    collectionName: input.collectionName,
+    vectorName: input.vectorName,
+    embeddingBaseUrl: input.embeddingBaseUrl,
+    embeddingApiKey: input.embeddingApiKey,
+    embeddingModel: input.embeddingModel,
+    payloadPath: input.payloadPath,
+  });
+
+  if (!parsed.success) {
+    return {
+      ok: false as const,
+      error: getActionErrorMessage(parsed.error, "No fue posible verificar la conexión con Qdrant."),
+    };
+  }
+
+  try {
+    const normalizedBaseUrl = normalizeQdrantBaseUrl(parsed.data.qdrantBaseUrl);
+    const normalizedApiKey = parsed.data.qdrantApiKey.trim();
+    const normalizedCollectionName = parsed.data.collectionName.trim();
+    const normalizedEmbeddingBaseUrl = normalizeEmbeddingBaseUrl(parsed.data.embeddingBaseUrl);
+    const normalizedEmbeddingApiKey = parsed.data.embeddingApiKey.trim();
+    const normalizedEmbeddingModel = parsed.data.embeddingModel.trim();
+
+    if (!normalizedEmbeddingBaseUrl) {
+      throw new Error("Define la URL del proveedor de embeddings.");
+    }
+
+    if (!normalizedEmbeddingModel) {
+      throw new Error("Define el modelo de embeddings antes de probar la conexión.");
+    }
+
+    await testQdrantConnection({
+      baseUrl: normalizedBaseUrl,
+      apiKey: normalizedApiKey,
+      collectionName: normalizedCollectionName,
+    });
+
+    const embedding = await createEmbedding({
+      model: normalizedEmbeddingModel,
+      text: "connection test",
+      baseUrl: normalizedEmbeddingBaseUrl,
+      apiKey: normalizedEmbeddingApiKey,
+    });
+
+    await queryQdrantTopPoint({
+      baseUrl: normalizedBaseUrl,
+      apiKey: normalizedApiKey,
+      collectionName: normalizedCollectionName,
+      vectorName: parsed.data.vectorName,
+      queryVector: embedding.vector,
+      payloadPath: parsed.data.payloadPath,
+    });
+
+    return {
+      ok: true as const,
+      message: `Embeddings y Qdrant respondieron correctamente. La colección "${normalizedCollectionName}" aceptó una consulta vectorial.`,
+    };
+  } catch (error) {
+    return {
+      ok: false as const,
+      error:
+        error instanceof Error
+          ? error.message
+          : "No fue posible verificar la conexión con Qdrant.",
+    };
+  }
 }
 
 export async function createSessionTagWithFeedback(
@@ -3341,7 +3447,9 @@ export async function generateDatasetFieldWithRag(input: {
         qdrantApiKey: true,
         collectionName: true,
         vectorName: true,
-        queryModel: true,
+        embeddingBaseUrl: true,
+        embeddingApiKey: true,
+        embeddingModel: true,
         payloadPath: true,
       },
     });
@@ -3362,14 +3470,28 @@ export async function generateDatasetFieldWithRag(input: {
   const queryText = buildDatasetFieldRagQuery(parsed.data);
 
   try {
+    if (!ragConfiguration.embeddingBaseUrl) {
+      throw new Error("La configuración RAG no tiene URL de proveedor de embeddings.");
+    }
+
+    if (!ragConfiguration.embeddingModel) {
+      throw new Error("La configuración RAG no tiene modelo de embeddings.");
+    }
+
+    const embedding = await createEmbedding({
+      model: ragConfiguration.embeddingModel,
+      text: queryText,
+      baseUrl: ragConfiguration.embeddingBaseUrl,
+      apiKey: ragConfiguration.embeddingApiKey,
+    });
+
     const result = await queryQdrantTopPoint({
       baseUrl: ragConfiguration.qdrantBaseUrl,
       apiKey: ragConfiguration.qdrantApiKey,
       collectionName: ragConfiguration.collectionName,
       vectorName: ragConfiguration.vectorName,
-      queryModel: ragConfiguration.queryModel,
+      queryVector: embedding.vector,
       payloadPath: ragConfiguration.payloadPath,
-      queryText,
     });
 
     if (!result.point) {
@@ -3389,7 +3511,7 @@ export async function generateDatasetFieldWithRag(input: {
         configurationName: ragConfiguration.name,
         collectionName: ragConfiguration.collectionName,
         vectorName: ragConfiguration.vectorName,
-        queryModel: ragConfiguration.queryModel,
+        embeddingModel: ragConfiguration.embeddingModel,
         payloadPath: ragConfiguration.payloadPath,
         generatedAt,
         queryText: parsed.data.promptText,
