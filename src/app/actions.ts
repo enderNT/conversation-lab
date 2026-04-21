@@ -3335,13 +3335,11 @@ export async function generateDatasetFieldWithLlm(input: {
   const llmContextSelection = normalizeDatasetLlmContextSelection(parsed.data.llmContextSelection);
   const prompt = buildDatasetFieldGenerationPrompt({
     ...parsed.data,
-    llmContextSelection,
   });
   const requestPreview = buildDatasetFieldGenerationRequestPreview({
     ...parsed.data,
     model: llmConfiguration.chatModel,
     configurationName: llmConfiguration.name,
-    llmContextSelection,
   });
 
   try {
@@ -3353,7 +3351,7 @@ export async function generateDatasetFieldWithLlm(input: {
       messages: [
         {
           role: "user",
-          text: prompt,
+          text: prompt.promptText,
         },
       ],
     });
@@ -3371,6 +3369,8 @@ export async function generateDatasetFieldWithLlm(input: {
         systemPromptApplied: false,
         llmContextSelection,
         requestPreview,
+        usedTokens: prompt.usedTokens,
+        unresolvedTokens: prompt.unresolvedTokens,
         generatedAt,
         responseId: response.responseId,
         promptText: parsed.data.promptText,

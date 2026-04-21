@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useActionState, useEffect, useMemo, useState } from "react";
+import { useActionState, useEffect, useMemo, useRef, useState } from "react";
 import { generateDatasetFieldWithLlm, generateDatasetFieldWithRag } from "@/app/actions";
 import { FormLabel } from "@/components/form-label";
 import { FormSubmitButton } from "@/components/form-submit-button";
@@ -9,9 +9,7 @@ import { useToast } from "@/components/toast-provider";
 import { useActionFeedbackToast } from "@/components/use-action-feedback-toast";
 import {
   buildDatasetFieldGenerationRequestPreview,
-  DATASET_LLM_CONTEXT_KEYS,
-  DATASET_LLM_CONTEXT_LABELS,
-  normalizeDatasetLlmContextSelection,
+  DATASET_LLM_PROMPT_TOKEN_DEFINITIONS,
 } from "@/lib/dataset-llm";
 import {
   buildDefaultMappings,
@@ -104,14 +102,6 @@ function prettyJson(value: JsonValue | undefined) {
   }
 
   return typeof value === "string" ? value : JSON.stringify(value, null, 2);
-}
-
-function renderContextChipClassName(active: boolean) {
-  return [
-    "dataset-mapping-chip",
-    "dataset-mapping-chip-toggle",
-    active ? "dataset-mapping-chip-active" : "dataset-mapping-chip-inactive",
-  ].join(" ");
 }
 
 function asRecord(value: JsonValue | undefined) {
@@ -300,6 +290,7 @@ export function DatasetExampleEditor(props: {
   const [outputManualOverride, setOutputManualOverride] = useState(props.mode === "edit");
   const [showSchema, setShowSchema] = useState(false);
   const [activeFieldKey, setActiveFieldKey] = useState<string | null>(null);
+  const llmPromptTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const { pushToast } = useToast();
 
   useActionFeedbackToast(state, {
@@ -540,6 +531,44 @@ export function DatasetExampleEditor(props: {
     );
   };
 
+  const insertPromptToken = (
+    side: "input" | "output",
+    fieldKey: string,
+    currentPromptText: string,
+    token: string,
+  ) => {
+    const textarea = llmPromptTextareaRef.current;
+
+    if (!textarea) {
+      updateMapping(side, fieldKey, (current) => ({
+        ...current,
+        llmPromptText: current.llmPromptText
+          ? `${current.llmPromptText}\n${token}`
+          : token,
+      }));
+      return;
+    }
+
+    const basePromptText = textarea.value || currentPromptText;
+    const selectionStart = textarea.selectionStart ?? basePromptText.length;
+    const selectionEnd = textarea.selectionEnd ?? basePromptText.length;
+    const nextPromptText =
+      basePromptText.slice(0, selectionStart) +
+      token +
+      basePromptText.slice(selectionEnd);
+    const nextCaretPosition = selectionStart + token.length;
+
+    updateMapping(side, fieldKey, (current) => ({
+      ...current,
+      llmPromptText: nextPromptText,
+    }));
+
+    requestAnimationFrame(() => {
+      textarea.focus();
+      textarea.setSelectionRange(nextCaretPosition, nextCaretPosition);
+    });
+  };
+
   async function handleGenerateField(
     side: "input" | "output",
     field: DatasetSchemaField,
@@ -588,7 +617,6 @@ export function DatasetExampleEditor(props: {
         surroundingContextJson: JSON.stringify(liveSourceSlice.surroundingContext, null, 2),
         inputPayloadJson: JSON.stringify(computedInputPayload, null, 2),
         outputPayloadJson: JSON.stringify(computedOutputPayload, null, 2),
-        llmContextSelection: normalizeDatasetLlmContextSelection(mapping.llmContextSelection),
       });
 
       if (!result.ok) {
@@ -703,7 +731,6 @@ export function DatasetExampleEditor(props: {
     const currentFieldKey = stepKey;
     const isGenerating = generatingFieldKey === currentFieldKey;
     const llmGenerationMeta = asRecord(mapping.llmGenerationMeta);
-    const llmContextSelection = normalizeDatasetLlmContextSelection(mapping.llmContextSelection);
     const selectedLlmConfiguration =
       props.llmConfigurations.find((configuration) => configuration.id === mapping.llmConfigurationId) ?? null;
     const llmRequestPreview = buildDatasetFieldGenerationRequestPreview({
@@ -722,7 +749,6 @@ export function DatasetExampleEditor(props: {
       surroundingContextJson: JSON.stringify(liveSourceSlice.surroundingContext, null, 2),
       inputPayloadJson: JSON.stringify(computedInputPayload, null, 2),
       outputPayloadJson: JSON.stringify(computedOutputPayload, null, 2),
-      llmContextSelection,
     });
     const llmGeneratedAt = formatDateTime(
       typeof llmGenerationMeta?.generatedAt === "string"
@@ -922,35 +948,35 @@ export function DatasetExampleEditor(props: {
                     </label>
 
                     <div className="dataset-mapping-mini-panel">
-                      <p className="dataset-mapping-eyebrow">Contexto enviado</p>
+                      <p className="dataset-mapping-eyebrow">Variables invocables</p>
                       <div className="mt-3 flex flex-wrap gap-2">
-                        {DATASET_LLM_CONTEXT_KEYS.map((contextKey) => {
-                          const active = llmContextSelection[contextKey];
-
-                          return (
-                            <button
-                              key={contextKey}
-                              type="button"
-                              className={renderContextChipClassName(active)}
-                              onClick={() => {
-                                updateMapping(side, field.key, (current) => ({
-                                  ...current,
-                                  llmContextSelection: {
-                                    ...normalizeDatasetLlmContextSelection(current.llmContextSelection),
-                                    [contextKey]: !active,
-                                  },
-                                }));
-                              }}
-                              aria-pressed={active}
-                              title={active ? "Quitar del request" : "Incluir en el request"}
-                            >
-                              {DATASET_LLM_CONTEXT_LABELS[contextKey]}
-                            </button>
-                          );
-                        })}
+                        {DATASET_LLM_PROMPT_TOKEN_DEFINITIONS.map((definition) => (
+                          <button
+                            key={definition.key}
+                            type="button"
+                            className="dataset-mapping-chip dataset-mapping-chip-toggle dataset-mapping-chip-active"
+                            onClick={() =>
+                              insertPromptToken(
+                                side,
+                                field.key,
+                                mapping.llmPromptText,
+                                definition.token,
+                              )
+                            }
+                            title={`${definition.description} · Click para insertar`}
+                          >
+                            <span className="font-medium text-[var(--foreground)]">
+                              {definition.label}
+                            </span>
+                            <span className="ml-2 font-mono text-[0.68rem] text-[var(--muted)]">
+                              {definition.token}
+                            </span>
+                          </button>
+                        ))}
                       </div>
                       <p className="mt-3 text-xs leading-6 text-[var(--muted)]">
-                        La informacion del campo y del spec siempre se manda. Aqui solo decides que contexto adicional entra al request.
+                        Nada se envia por defecto. Usa estas variables como guia y haz click para
+                        insertarlas donde quieras dentro del prompt.
                       </p>
                     </div>
                   </div>
@@ -960,6 +986,7 @@ export function DatasetExampleEditor(props: {
                       Instruccion para este campo
                     </FormLabel>
                     <textarea
+                      ref={llmPromptTextareaRef}
                       className="field min-h-28"
                       value={mapping.llmPromptText}
                       onChange={(event) => {
@@ -969,7 +996,7 @@ export function DatasetExampleEditor(props: {
                           llmPromptText: nextValue,
                         }));
                       }}
-                      placeholder="Resume los hechos clave y devuelve solo el valor util para este campo."
+                      placeholder={"Ejemplo: Usa {{field.summary}} y {{source.last_user_message}}.\nSi quieres salida compatible con el parser, agrega {{guide.output_contract}}."}
                     />
                   </label>
 
@@ -978,7 +1005,8 @@ export function DatasetExampleEditor(props: {
                       Preview del request al modelo
                     </summary>
                     <p className="mt-3 text-xs leading-6 text-[var(--muted)]">
-                      En esta ruta no se aplica el prompt global de la configuracion LLM; se usa solo la instruccion del campo y el contexto seleccionado.
+                      Se enviara exactamente este prompt expandido a partir de tu plantilla. Si
+                      dejas un token desconocido, se conservara tal cual en el request.
                     </p>
                     <pre className="mt-4 whitespace-pre-wrap break-words rounded-[0.9rem] border border-[var(--line)] bg-white/75 p-4 text-xs leading-6 text-[var(--muted-strong)]">
                       {prettyJson(llmRequestPreview)}
