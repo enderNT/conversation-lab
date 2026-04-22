@@ -27,6 +27,8 @@ import {
   validateDerivedExample,
 } from "@/lib/cases";
 import {
+  buildDatasetBatchGenerationPrompt,
+  buildDatasetBatchGenerationRequestPreview,
   buildDatasetFieldGenerationPrompt,
   buildDatasetFieldGenerationRequestPreview,
   normalizeDatasetLlmContextSelection,
@@ -262,6 +264,20 @@ const datasetFieldGenerationSchema = z.object({
   llmContextSelection: z.record(z.string(), z.boolean()).optional(),
 });
 
+const datasetBatchFieldGenerationSchema = z.object({
+  side: z.enum(DATASET_FIELD_SIDES),
+  field: datasetSchemaFieldSchema,
+});
+
+const datasetBatchGenerationSchema = z.object({
+  llmConfigurationId: z.string().trim().min(1, "Selecciona una configuración LLM global."),
+  datasetSpecName: z.string().trim().default(""),
+  datasetSpecSlug: z.string().trim().default(""),
+  datasetSpecDescription: z.string().default(""),
+  conversationSliceJson: z.string().trim().default("[]"),
+  fields: z.array(datasetBatchFieldGenerationSchema).min(1, "No hay campos para autollenar."),
+});
+
 const datasetFieldRagGenerationSchema = z.object({
   ragConfigurationId: z.string().trim().min(1, "Selecciona una configuración RAG global."),
   side: z.enum(DATASET_FIELD_SIDES),
@@ -447,6 +463,100 @@ function parseGeneratedDatasetFieldResponse(rawText: string, field: DatasetSchem
       `El modelo devolvio texto no JSON para ${field.key}. Ajusta la instruccion o usa un campo manual.`,
     );
   }
+}
+
+function parseGeneratedDatasetBatchResponse(
+  rawText: string,
+  requestedFields: Array<{ side: "input" | "output"; field: DatasetSchemaField }>,
+) {
+  const trimmed = rawText.trim();
+
+  if (!trimmed) {
+    throw new Error("El modelo devolvio una respuesta vacia para el autollenado.");
+  }
+
+  let parsed: JsonValue;
+
+  try {
+    parsed = JSON.parse(trimmed) as JsonValue;
+  } catch {
+    throw new Error("El modelo devolvio una respuesta no JSON para el autollenado.");
+  }
+
+  const rawFields =
+    Array.isArray(parsed)
+      ? parsed
+      : typeof parsed === "object" &&
+          parsed !== null &&
+          !Array.isArray(parsed) &&
+          "fields" in parsed &&
+          Array.isArray(parsed.fields)
+        ? parsed.fields
+        : null;
+
+  if (!rawFields) {
+    throw new Error("El modelo no devolvio la lista de fields esperada para el autollenado.");
+  }
+
+  const requestedKeys = requestedFields.map((item) => `${item.side}:${item.field.key}`);
+  const requestedFieldMap = new Map<string, DatasetSchemaField>(
+    requestedFields.map((item) => [`${item.side}:${item.field.key}`, item.field]),
+  );
+  const generatedFieldMap = new Map<
+    string,
+    {
+      side: "input" | "output";
+      fieldKey: string;
+      value: JsonValue;
+      confidence: number | null;
+      notes: string;
+    }
+  >();
+
+  for (const item of rawFields) {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) {
+      continue;
+    }
+
+    const record = item as Record<string, JsonValue>;
+    const side = record.side;
+    const fieldKey = record.fieldKey;
+
+    if ((side !== "input" && side !== "output") || typeof fieldKey !== "string") {
+      continue;
+    }
+
+    const requestKey = `${side}:${fieldKey}`;
+
+    if (!requestedFieldMap.has(requestKey)) {
+      continue;
+    }
+
+    generatedFieldMap.set(requestKey, {
+      side,
+      fieldKey,
+      value: (record.value ?? null) as JsonValue,
+      confidence: typeof record.confidence === "number" ? record.confidence : null,
+      notes: typeof record.notes === "string" ? record.notes : "",
+    });
+  }
+
+  return {
+    fields: requestedKeys
+      .map((key) => generatedFieldMap.get(key))
+      .filter(
+        (
+          item,
+        ): item is {
+          side: "input" | "output";
+          fieldKey: string;
+          value: JsonValue;
+          confidence: number | null;
+          notes: string;
+        } => item !== undefined,
+      ),
+    missingFieldKeys: requestedKeys.filter((key) => !generatedFieldMap.has(key)),
+  };
 }
 
 function parseArtifactList(value: string) {
@@ -3382,6 +3492,131 @@ export async function generateDatasetFieldWithLlm(input: {
     return {
       ok: false as const,
       error: getActionErrorMessage(error, "No fue posible generar el valor para este campo."),
+    };
+  }
+}
+
+export async function generateDatasetFieldsWithLlm(input: {
+  llmConfigurationId: string;
+  datasetSpecName: string;
+  datasetSpecSlug: string;
+  datasetSpecDescription: string;
+  conversationSliceJson: string;
+  fields: Array<{
+    side: "input" | "output";
+    field: DatasetSchemaField;
+  }>;
+}) {
+  const parsed = datasetBatchGenerationSchema.safeParse(input);
+
+  if (!parsed.success) {
+    return {
+      ok: false as const,
+      error: getActionErrorMessage(parsed.error, "No fue posible preparar el autollenado."),
+    };
+  }
+
+  let llmConfiguration;
+
+  try {
+    llmConfiguration = await prisma.llmConfiguration.findUnique({
+      where: { id: parsed.data.llmConfigurationId },
+      select: {
+        id: true,
+        name: true,
+        chatModel: true,
+        chatBaseUrl: true,
+        chatApiKey: true,
+        systemPrompt: true,
+      },
+    });
+  } catch (error) {
+    return {
+      ok: false as const,
+      error: getActionErrorMessage(error, "No fue posible cargar la configuracion LLM."),
+    };
+  }
+
+  if (!llmConfiguration) {
+    return {
+      ok: false as const,
+      error: "La configuracion LLM seleccionada ya no existe.",
+    };
+  }
+
+  if (!llmConfiguration.chatModel.trim()) {
+    return {
+      ok: false as const,
+      error: "La configuracion LLM no tiene un modelo definido.",
+    };
+  }
+
+  const prompt = buildDatasetBatchGenerationPrompt({
+    ...parsed.data,
+  });
+  const requestPreview = buildDatasetBatchGenerationRequestPreview({
+    ...parsed.data,
+    model: llmConfiguration.chatModel,
+    configurationName: llmConfiguration.name,
+  });
+  const llmContextSelection = normalizeDatasetLlmContextSelection({
+    conversationSlice: true,
+  });
+  const promptText = "Autollenado asistido usando solo el transcript seleccionado y la descripcion del campo.";
+
+  try {
+    const response = await generateAssistantReply({
+      model: llmConfiguration.chatModel,
+      baseUrl: llmConfiguration.chatBaseUrl,
+      apiKey: llmConfiguration.chatApiKey,
+      systemPrompt: null,
+      messages: [
+        {
+          role: "user",
+          text: prompt.promptText,
+        },
+      ],
+    });
+
+    const generated = parseGeneratedDatasetBatchResponse(response.text, parsed.data.fields);
+
+    if (generated.fields.length === 0) {
+      return {
+        ok: false as const,
+        error: "El modelo no devolvio ningun campo util para el autollenado.",
+      };
+    }
+
+    const generatedAt = new Date().toISOString();
+
+    return {
+      ok: true as const,
+      fields: generated.fields.map((item) => ({
+        side: item.side,
+        fieldKey: item.fieldKey,
+        valueText: stringifyJsonValue(item.value),
+        metadata: {
+          configurationId: llmConfiguration.id,
+          configurationName: llmConfiguration.name,
+          model: response.model,
+          systemPromptApplied: false,
+          llmContextSelection,
+          requestPreview,
+          generatedAt,
+          responseId: response.responseId,
+          promptText,
+          confidence: item.confidence,
+          notes: item.notes,
+          generationMode: "bulk_autofill",
+          batchFieldCount: parsed.data.fields.length,
+        } satisfies JsonValue,
+      })),
+      missingFieldKeys: generated.missingFieldKeys,
+    };
+  } catch (error) {
+    return {
+      ok: false as const,
+      error: getActionErrorMessage(error, "No fue posible autollenar el dataset example."),
     };
   }
 }

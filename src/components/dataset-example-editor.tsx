@@ -2,7 +2,11 @@
 
 import Link from "next/link";
 import { useActionState, useEffect, useMemo, useRef, useState } from "react";
-import { generateDatasetFieldWithLlm, generateDatasetFieldWithRag } from "@/app/actions";
+import {
+  generateDatasetFieldWithLlm,
+  generateDatasetFieldWithRag,
+  generateDatasetFieldsWithLlm,
+} from "@/app/actions";
 import { DatasetExampleDeleteButton } from "@/components/dataset-example-delete-button";
 import { FormLabel } from "@/components/form-label";
 import { FormSubmitButton } from "@/components/form-submit-button";
@@ -187,6 +191,13 @@ const SOURCE_BADGES: Record<DatasetFieldMappingRecord["sourceKey"], string> = {
   constant: "Const",
 };
 
+const DATASET_AUTOFILL_LLM_PROMPT_TEXT =
+  "Autollenado asistido usando solo el transcript seleccionado y la descripcion del campo.";
+
+function buildDatasetAutofillPromptText(fieldKey: string) {
+  return `${DATASET_AUTOFILL_LLM_PROMPT_TEXT}\nCampo: ${fieldKey}.`;
+}
+
 function getSourceSnapshot(
   sourceKey: DatasetFieldMappingRecord["sourceKey"],
   sourceSlice: SourceSliceRecord,
@@ -308,7 +319,17 @@ export function DatasetExampleEditor(props: {
   const [sourceTitle, setSourceTitle] = useState(props.sourceSlice.title);
   const [sourceSummary, setSourceSummary] = useState(props.sourceSlice.sourceSummary);
   const [reviewStatus, setReviewStatus] = useState(props.initialReviewStatus);
+  const [bulkLlmConfigurationId, setBulkLlmConfigurationId] = useState(
+    () =>
+      props.initialMappings?.find(
+        (mapping) =>
+          typeof mapping.llmConfigurationId === "string" && mapping.llmConfigurationId.trim().length > 0,
+      )?.llmConfigurationId?.trim() ??
+      props.llmConfigurations[0]?.id ??
+      "",
+  );
   const [generatingFieldKey, setGeneratingFieldKey] = useState<string | null>(null);
+  const [isBulkGenerating, setIsBulkGenerating] = useState(false);
   const [inputPayloadText, setInputPayloadText] = useState(
     JSON.stringify(props.initialInputPayload, null, 2),
   );
@@ -533,6 +554,19 @@ export function DatasetExampleEditor(props: {
       window.removeEventListener("keydown", handleKeyDown);
     };
   }, [previewModalState]);
+
+  useEffect(() => {
+    if (props.llmConfigurations.length === 0) {
+      if (bulkLlmConfigurationId !== "") {
+        setBulkLlmConfigurationId("");
+      }
+      return;
+    }
+
+    if (!props.llmConfigurations.some((configuration) => configuration.id === bulkLlmConfigurationId)) {
+      setBulkLlmConfigurationId(props.llmConfigurations[0]?.id ?? "");
+    }
+  }, [bulkLlmConfigurationId, props.llmConfigurations]);
 
   const activeStep =
     fieldSteps.find((step) => step.stepKey === activeFieldKey) ?? fieldSteps[0] ?? null;
@@ -880,6 +914,110 @@ export function DatasetExampleEditor(props: {
       });
     } finally {
       setGeneratingFieldKey(null);
+    }
+  }
+
+  async function handleGenerateAllFieldsWithLlm() {
+    if (!selectedSpec) {
+      return;
+    }
+
+    if (!bulkLlmConfigurationId.trim()) {
+      pushToast({
+        title: "Falta configuracion LLM",
+        description: "Selecciona una configuracion global antes de autollenar el dataset.",
+        variant: "error",
+        durationMs: 7000,
+      });
+      return;
+    }
+
+    if (fieldSteps.length === 0) {
+      pushToast({
+        title: "No hay campos para autollenar",
+        description: "El dataset spec activo no define campos renderizables.",
+        variant: "info",
+        durationMs: 6000,
+      });
+      return;
+    }
+
+    if (
+      resolvedFieldCount > 0 &&
+      !window.confirm(
+        "Este autollenado reemplazara los valores actuales de los campos con un nuevo borrador generado por LLM. ¿Quieres continuar?",
+      )
+    ) {
+      return;
+    }
+
+    setIsBulkGenerating(true);
+
+    try {
+      const result = await generateDatasetFieldsWithLlm({
+        llmConfigurationId: bulkLlmConfigurationId,
+        datasetSpecName: selectedSpec.name,
+        datasetSpecSlug: selectedSpec.slug,
+        datasetSpecDescription: selectedSpec.description,
+        conversationSliceJson: compactConversationSliceJson,
+        fields: fieldSteps.map((step) => ({
+          side: step.side,
+          field: step.field,
+        })),
+      });
+
+      if (!result.ok) {
+        pushToast({
+          title: "No fue posible autollenar el dataset",
+          description: result.error,
+          variant: "error",
+          durationMs: 7000,
+        });
+        return;
+      }
+
+      const generatedFieldMap = new Map(
+        result.fields.map((item) => [`${item.side}:${item.fieldKey}`, item] as const),
+      );
+
+      setMappings((current) =>
+        current.map((mapping) => {
+          const generatedField = generatedFieldMap.get(`${mapping.side}:${mapping.fieldKey}`);
+
+          if (!generatedField) {
+            return mapping;
+          }
+
+          return {
+            ...mapping,
+            sourceKey: "llm_generated",
+            sourcePath: "",
+            transformChain: [],
+            llmConfigurationId: bulkLlmConfigurationId,
+            llmPromptText: buildDatasetAutofillPromptText(mapping.fieldKey),
+            llmContextSelection: {
+              conversationSlice: true,
+            },
+            llmGeneratedValueText: generatedField.valueText,
+            llmGenerationMeta: generatedField.metadata,
+          };
+        }),
+      );
+
+      const generatedCount = result.fields.length;
+      const missingCount = result.missingFieldKeys.length;
+
+      pushToast({
+        title: missingCount === 0 ? "Borrador asistido listo" : "Autollenado parcial completado",
+        description:
+          missingCount === 0
+            ? `Se llenaron ${generatedCount} campos usando solo el slice seleccionado.`
+            : `Se llenaron ${generatedCount} campos. ${missingCount} quedaron pendientes para revisión manual.`,
+        variant: missingCount === 0 ? "success" : "info",
+        durationMs: 7000,
+      });
+    } finally {
+      setIsBulkGenerating(false);
     }
   }
 
@@ -1748,6 +1886,54 @@ export function DatasetExampleEditor(props: {
                       </select>
                     </label>
                   </div>
+                </div>
+
+                <div className="rounded-[1rem] border border-[var(--line)] bg-white/80 p-4">
+                  <p className="font-[var(--font-label)] text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--muted)]">
+                    Llenado asistido
+                  </p>
+                  <p className="mt-3 text-sm leading-6 text-[var(--muted-strong)]">
+                    Genera un borrador completo usando solo el slice seleccionado y la descripcion de
+                    cada campo del spec activo.
+                  </p>
+
+                  <label className="mt-4 block space-y-2">
+                    <FormLabel className="dataset-mapping-control-label">
+                      Configuracion global LLM
+                    </FormLabel>
+                    <select
+                      className="field"
+                      value={bulkLlmConfigurationId}
+                      onChange={(event) => setBulkLlmConfigurationId(event.target.value)}
+                    >
+                      <option value="">Selecciona una configuracion</option>
+                      {props.llmConfigurations.map((configuration) => (
+                        <option key={configuration.id} value={configuration.id}>
+                          {configuration.name} · {configuration.chatModel}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <button
+                    type="button"
+                    className="button-primary mt-4 inline-flex w-full items-center justify-center"
+                    onClick={() => void handleGenerateAllFieldsWithLlm()}
+                    disabled={
+                      isBulkGenerating ||
+                      !selectedSpec ||
+                      fieldSteps.length === 0 ||
+                      props.llmConfigurations.length === 0
+                    }
+                  >
+                    {isBulkGenerating ? "Llenando..." : "Llenar todo con LLM"}
+                  </button>
+
+                  <p className="mt-3 text-xs leading-5 text-[var(--muted)]">
+                    {fieldSteps.length > 0
+                      ? `${fieldSteps.length} campo(s) disponibles para borrador asistido.`
+                      : "No hay campos disponibles para el spec activo."}
+                  </p>
                 </div>
 
                 {props.mode === "edit" ? (

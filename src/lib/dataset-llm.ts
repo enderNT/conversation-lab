@@ -345,3 +345,84 @@ export function buildDatasetFieldGenerationRequestPreview(input: {
     ],
   } satisfies JsonValue;
 }
+
+function buildDatasetFieldBatchSummary(
+  fields: Array<{ side: "input" | "output"; field: DatasetSchemaField }>,
+) {
+  return fields
+    .map((item, index) =>
+      [
+        `${index + 1}. ${item.side}.${item.field.key}`,
+        `Tipo esperado: ${item.field.type}.`,
+        `Requerido: ${item.field.required ? "si" : "no"}.`,
+        item.field.description ? `Descripcion: ${item.field.description}` : "",
+        item.field.enumValues?.length
+          ? `Valores permitidos: ${item.field.enumValues.join(", ")}.`
+          : "",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    )
+    .join("\n\n");
+}
+
+export function buildDatasetBatchGenerationPrompt(input: {
+  datasetSpecName: string;
+  datasetSpecSlug: string;
+  datasetSpecDescription: string;
+  conversationSliceJson: string;
+  fields: Array<{ side: "input" | "output"; field: DatasetSchemaField }>;
+}) {
+  return {
+    promptText: [
+      "Genera un borrador completo para un dataset example de DSPy.",
+      "Usa SOLO el transcript seleccionado como contexto. No uses resumen, notas, contexto cercano ni payloads previos.",
+      [
+        "Devuelve SOLO JSON valido, sin markdown ni texto extra.",
+        'Usa exactamente esta forma: {"fields":[{"side":"input","fieldKey":"nombre","value":...,"confidence":0.0,"notes":""}]}',
+      ].join("\n"),
+      [
+        "Reglas:",
+        "- Devuelve un elemento por cada campo listado.",
+        "- Respeta el tipo esperado de cada campo.",
+        "- Si el campo es enum, usa solo uno de los valores permitidos.",
+        "- Si el campo es conversation_turns, devuelve un arreglo JSON de objetos con role y text.",
+        "- Si un campo opcional no puede inferirse razonablemente, usa null y explica la razon en notes.",
+        "- Si hay incertidumbre, entrega la mejor inferencia util para entrenamiento y describe la duda en notes.",
+        "- No inventes campos nuevos.",
+      ].join("\n"),
+      buildDatasetSpecSummary(input),
+      `Campos objetivo:\n${buildDatasetFieldBatchSummary(input.fields)}`,
+      `Transcript seleccionado (JSON role-text):\n${input.conversationSliceJson}`,
+    ]
+      .filter(Boolean)
+      .join("\n\n"),
+  };
+}
+
+export function buildDatasetBatchGenerationRequestPreview(input: {
+  model?: string | null;
+  configurationName?: string | null;
+  datasetSpecName: string;
+  datasetSpecSlug: string;
+  datasetSpecDescription: string;
+  conversationSliceJson: string;
+  fields: Array<{ side: "input" | "output"; field: DatasetSchemaField }>;
+}) {
+  const renderedPrompt = buildDatasetBatchGenerationPrompt(input);
+
+  return {
+    route: "dataset_example_bulk_autofill",
+    configurationName: input.configurationName?.trim() || null,
+    model: input.model?.trim() || null,
+    systemPrompt: null,
+    systemPromptApplied: false,
+    promptTemplate: "Autollenado asistido usando solo el transcript seleccionado.",
+    messages: [
+      {
+        role: "user",
+        content: renderedPrompt.promptText,
+      },
+    ],
+  } satisfies JsonValue;
+}
