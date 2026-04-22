@@ -8,16 +8,18 @@ import { FormSubmitButton } from "@/components/form-submit-button";
 import { useToast } from "@/components/toast-provider";
 import { useActionFeedbackToast } from "@/components/use-action-feedback-toast";
 import {
-  buildDatasetFieldGenerationRequestPreview,
+  buildDatasetFieldGenerationPrompt,
   DATASET_LLM_PROMPT_TOKEN_DEFINITIONS,
 } from "@/lib/dataset-llm";
 import {
+  type DatasetTemplateRenderContext,
   buildDefaultMappings,
   buildPayloadFromMappings,
   hydrateMappingsFromStored,
   parseTransformChainText,
   resolveFieldMapping,
   serializeTransformChain,
+  stringifyCompactConversationSlice,
 } from "@/lib/datasets";
 import { EMPTY_ACTION_FORM_STATE, type ActionFormState } from "@/lib/form-state";
 import {
@@ -90,6 +92,13 @@ type DatasetFieldStep = {
   mapping: DatasetFieldMappingRecord;
   stepKey: string;
   ordinal: number;
+};
+
+type TemplateEditorMode = "llm" | "manual";
+
+type PreviewModalState = {
+  title: string;
+  content: string;
 };
 
 function serializeMappings(mappings: DatasetFieldMappingRecord[]) {
@@ -255,6 +264,24 @@ function getStepStatusTone(resolved: boolean, active: boolean) {
   return "dataset-stepper-status-pending";
 }
 
+function PreviewSurface(props: {
+  label: string;
+  content: string;
+  onExpand: () => void;
+}) {
+  return (
+    <section className="dataset-preview-surface">
+      <div className="dataset-preview-header">
+        <p className="dataset-mapping-control-label">{props.label}</p>
+        <button type="button" className="button-secondary" onClick={props.onExpand}>
+          Ver completo
+        </button>
+      </div>
+      <pre className="dataset-preview-clamp">{props.content}</pre>
+    </section>
+  );
+}
+
 export function DatasetExampleEditor(props: {
   mode: "create" | "edit";
   backHref: string;
@@ -290,7 +317,8 @@ export function DatasetExampleEditor(props: {
   const [outputManualOverride, setOutputManualOverride] = useState(props.mode === "edit");
   const [showSchema, setShowSchema] = useState(false);
   const [activeFieldKey, setActiveFieldKey] = useState<string | null>(null);
-  const llmPromptTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const [previewModalState, setPreviewModalState] = useState<PreviewModalState | null>(null);
+  const templateTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const { pushToast } = useToast();
 
   useActionFeedbackToast(state, {
@@ -326,29 +354,121 @@ export function DatasetExampleEditor(props: {
     }),
     [props.sourceSlice, sourceSummary, sourceTitle],
   );
-  const computedInputPayload = selectedSpec
-    ? buildPayloadFromMappings({
-        side: "input",
-        sourceSlice: liveSourceSlice,
-        schema: selectedSpec.inputSchema,
-        mappings,
-      })
-    : {};
-  const computedOutputPayload = selectedSpec
-    ? buildPayloadFromMappings({
-        side: "output",
-        sourceSlice: liveSourceSlice,
-        schema: selectedSpec.outputSchema,
-        mappings,
-      })
-    : {};
+  const sessionNotes = liveSourceSlice.sourceMetadata.session_notes ?? "";
+  const compactConversationSliceJson = useMemo(
+    () => stringifyCompactConversationSlice(liveSourceSlice.conversationSlice),
+    [liveSourceSlice.conversationSlice],
+  );
+  const compactSurroundingContextJson = useMemo(
+    () => stringifyCompactConversationSlice(liveSourceSlice.surroundingContext),
+    [liveSourceSlice.surroundingContext],
+  );
+  const baseInputPayload = useMemo(() => {
+    if (!selectedSpec) {
+      return {};
+    }
+
+    return buildPayloadFromMappings({
+      side: "input",
+      sourceSlice: liveSourceSlice,
+      schema: selectedSpec.inputSchema,
+      mappings,
+    });
+  }, [liveSourceSlice, mappings, selectedSpec]);
+  const baseOutputPayload = useMemo(() => {
+    if (!selectedSpec) {
+      return {};
+    }
+
+    return buildPayloadFromMappings({
+      side: "output",
+      sourceSlice: liveSourceSlice,
+      schema: selectedSpec.outputSchema,
+      mappings,
+    });
+  }, [liveSourceSlice, mappings, selectedSpec]);
+  const baseInputPayloadJson = useMemo(
+    () => JSON.stringify(baseInputPayload, null, 2),
+    [baseInputPayload],
+  );
+  const baseOutputPayloadJson = useMemo(
+    () => JSON.stringify(baseOutputPayload, null, 2),
+    [baseOutputPayload],
+  );
+  const buildTemplateContext = (
+    side: "input" | "output",
+    field: DatasetSchemaField,
+  ): DatasetTemplateRenderContext | undefined => {
+    if (!selectedSpec) {
+      return undefined;
+    }
+
+    return {
+      side,
+      field,
+      datasetSpecName: selectedSpec.name,
+      datasetSpecSlug: selectedSpec.slug,
+      datasetSpecDescription: selectedSpec.description,
+      inputPayloadJson: baseInputPayloadJson,
+      outputPayloadJson: baseOutputPayloadJson,
+    };
+  };
+  const computedInputPayload = useMemo(() => {
+    if (!selectedSpec) {
+      return {};
+    }
+
+    return buildPayloadFromMappings({
+      side: "input",
+      sourceSlice: liveSourceSlice,
+      schema: selectedSpec.inputSchema,
+      mappings,
+      templateContextFactory: (field, side) => ({
+        side,
+        field,
+        datasetSpecName: selectedSpec.name,
+        datasetSpecSlug: selectedSpec.slug,
+        datasetSpecDescription: selectedSpec.description,
+        inputPayloadJson: baseInputPayloadJson,
+        outputPayloadJson: baseOutputPayloadJson,
+      }),
+    });
+  }, [baseInputPayloadJson, baseOutputPayloadJson, liveSourceSlice, mappings, selectedSpec]);
+  const computedOutputPayload = useMemo(() => {
+    if (!selectedSpec) {
+      return {};
+    }
+
+    return buildPayloadFromMappings({
+      side: "output",
+      sourceSlice: liveSourceSlice,
+      schema: selectedSpec.outputSchema,
+      mappings,
+      templateContextFactory: (field, side) => ({
+        side,
+        field,
+        datasetSpecName: selectedSpec.name,
+        datasetSpecSlug: selectedSpec.slug,
+        datasetSpecDescription: selectedSpec.description,
+        inputPayloadJson: baseInputPayloadJson,
+        outputPayloadJson: baseOutputPayloadJson,
+      }),
+    });
+  }, [baseInputPayloadJson, baseOutputPayloadJson, liveSourceSlice, mappings, selectedSpec]);
+  const computedInputPayloadJson = useMemo(
+    () => JSON.stringify(computedInputPayload, null, 2),
+    [computedInputPayload],
+  );
+  const computedOutputPayloadJson = useMemo(
+    () => JSON.stringify(computedOutputPayload, null, 2),
+    [computedOutputPayload],
+  );
   const effectiveInputPayloadText = inputManualOverride
     ? inputPayloadText
-    : JSON.stringify(computedInputPayload, null, 2);
+    : computedInputPayloadJson;
   const effectiveOutputPayloadText = outputManualOverride
     ? outputPayloadText
-    : JSON.stringify(computedOutputPayload, null, 2);
-  const sessionNotes = liveSourceSlice.sourceMetadata.session_notes ?? "";
+    : computedOutputPayloadJson;
   const fieldSteps = useMemo<DatasetFieldStep[]>(() => {
     if (!selectedSpec) {
       return [];
@@ -394,22 +514,45 @@ export function DatasetExampleEditor(props: {
     }
   }, [activeFieldKey, fieldSteps]);
 
+  useEffect(() => {
+    if (!previewModalState) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setPreviewModalState(null);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [previewModalState]);
+
   const activeStep =
     fieldSteps.find((step) => step.stepKey === activeFieldKey) ?? fieldSteps[0] ?? null;
   const activeStepIndex = activeStep
     ? fieldSteps.findIndex((step) => step.stepKey === activeStep.stepKey)
     : -1;
+  const resolveFieldPreview = (
+    side: "input" | "output",
+    field: DatasetSchemaField,
+    mapping: DatasetFieldMappingRecord,
+  ) =>
+    resolveFieldMapping(liveSourceSlice, mapping, {
+      templateContext: buildTemplateContext(side, field),
+    });
 
-  const resolvedFieldCount = useMemo(() => {
-    if (fieldSteps.length === 0) {
-      return 0;
-    }
-
-    return fieldSteps.reduce((count, step) => {
-      const preview = resolveFieldMapping(liveSourceSlice, step.mapping);
-      return count + (isMeaningfulValue(preview) ? 1 : 0);
-    }, 0);
-  }, [fieldSteps, liveSourceSlice]);
+  const resolvedFieldCount =
+    fieldSteps.length === 0
+      ? 0
+      : fieldSteps.reduce((count, step) => {
+          const preview = resolveFieldPreview(step.side, step.field, step.mapping);
+          return count + (isMeaningfulValue(preview) ? 1 : 0);
+        }, 0);
 
   const totalFieldCount =
     (selectedSpec?.inputSchema.length ?? 0) + (selectedSpec?.outputSchema.length ?? 0);
@@ -531,36 +674,47 @@ export function DatasetExampleEditor(props: {
     );
   };
 
-  const insertPromptToken = (
+  const insertTemplateToken = (
     side: "input" | "output",
     fieldKey: string,
-    currentPromptText: string,
+    mode: TemplateEditorMode,
+    currentValue: string,
     token: string,
   ) => {
-    const textarea = llmPromptTextareaRef.current;
+    const textarea = templateTextareaRef.current;
 
     if (!textarea) {
       updateMapping(side, fieldKey, (current) => ({
         ...current,
-        llmPromptText: current.llmPromptText
-          ? `${current.llmPromptText}\n${token}`
-          : token,
+        ...(mode === "llm"
+          ? {
+              llmPromptText: current.llmPromptText
+                ? `${current.llmPromptText}\n${token}`
+                : token,
+            }
+          : {
+              manualValueText: current.manualValueText
+                ? `${current.manualValueText}\n${token}`
+                : token,
+            }),
       }));
       return;
     }
 
-    const basePromptText = textarea.value || currentPromptText;
-    const selectionStart = textarea.selectionStart ?? basePromptText.length;
-    const selectionEnd = textarea.selectionEnd ?? basePromptText.length;
-    const nextPromptText =
-      basePromptText.slice(0, selectionStart) +
+    const baseValue = textarea.value || currentValue;
+    const selectionStart = textarea.selectionStart ?? baseValue.length;
+    const selectionEnd = textarea.selectionEnd ?? baseValue.length;
+    const nextValue =
+      baseValue.slice(0, selectionStart) +
       token +
-      basePromptText.slice(selectionEnd);
+      baseValue.slice(selectionEnd);
     const nextCaretPosition = selectionStart + token.length;
 
     updateMapping(side, fieldKey, (current) => ({
       ...current,
-      llmPromptText: nextPromptText,
+      ...(mode === "llm"
+        ? { llmPromptText: nextValue }
+        : { manualValueText: nextValue }),
     }));
 
     requestAnimationFrame(() => {
@@ -613,10 +767,10 @@ export function DatasetExampleEditor(props: {
         lastUserMessage: liveSourceSlice.lastUserMessage,
         sourceSummary: liveSourceSlice.sourceSummary,
         sessionNotes,
-        conversationSliceJson: JSON.stringify(liveSourceSlice.conversationSlice, null, 2),
-        surroundingContextJson: JSON.stringify(liveSourceSlice.surroundingContext, null, 2),
-        inputPayloadJson: JSON.stringify(computedInputPayload, null, 2),
-        outputPayloadJson: JSON.stringify(computedOutputPayload, null, 2),
+        conversationSliceJson: compactConversationSliceJson,
+        surroundingContextJson: compactSurroundingContextJson,
+        inputPayloadJson: computedInputPayloadJson,
+        outputPayloadJson: computedOutputPayloadJson,
       });
 
       if (!result.ok) {
@@ -691,10 +845,10 @@ export function DatasetExampleEditor(props: {
         lastUserMessage: liveSourceSlice.lastUserMessage,
         sourceSummary: liveSourceSlice.sourceSummary,
         sessionNotes,
-        conversationSliceJson: JSON.stringify(liveSourceSlice.conversationSlice, null, 2),
-        surroundingContextJson: JSON.stringify(liveSourceSlice.surroundingContext, null, 2),
-        inputPayloadJson: JSON.stringify(computedInputPayload, null, 2),
-        outputPayloadJson: JSON.stringify(computedOutputPayload, null, 2),
+        conversationSliceJson: compactConversationSliceJson,
+        surroundingContextJson: compactSurroundingContextJson,
+        inputPayloadJson: computedInputPayloadJson,
+        outputPayloadJson: computedOutputPayloadJson,
       });
 
       if (!result.ok) {
@@ -727,15 +881,19 @@ export function DatasetExampleEditor(props: {
 
   const renderFieldStep = (step: DatasetFieldStep) => {
     const { field, mapping, ordinal, side, stepKey } = step;
-    const preview = resolveFieldMapping(liveSourceSlice, mapping);
+    const preview = resolveFieldPreview(side, field, mapping);
     const currentFieldKey = stepKey;
     const isGenerating = generatingFieldKey === currentFieldKey;
     const llmGenerationMeta = asRecord(mapping.llmGenerationMeta);
+    const templateMode: TemplateEditorMode | null =
+      mapping.sourceKey === "llm_generated"
+        ? "llm"
+        : mapping.sourceKey === "manual"
+          ? "manual"
+          : null;
     const selectedLlmConfiguration =
       props.llmConfigurations.find((configuration) => configuration.id === mapping.llmConfigurationId) ?? null;
-    const llmRequestPreview = buildDatasetFieldGenerationRequestPreview({
-      model: selectedLlmConfiguration?.chatModel ?? null,
-      configurationName: selectedLlmConfiguration?.name ?? null,
+    const llmPromptPreview = buildDatasetFieldGenerationPrompt({
       side,
       field,
       datasetSpecName: selectedSpec?.name ?? "",
@@ -745,11 +903,20 @@ export function DatasetExampleEditor(props: {
       lastUserMessage: liveSourceSlice.lastUserMessage,
       sourceSummary: liveSourceSlice.sourceSummary,
       sessionNotes,
-      conversationSliceJson: JSON.stringify(liveSourceSlice.conversationSlice, null, 2),
-      surroundingContextJson: JSON.stringify(liveSourceSlice.surroundingContext, null, 2),
-      inputPayloadJson: JSON.stringify(computedInputPayload, null, 2),
-      outputPayloadJson: JSON.stringify(computedOutputPayload, null, 2),
+      conversationSliceJson: compactConversationSliceJson,
+      surroundingContextJson: compactSurroundingContextJson,
+      inputPayloadJson: computedInputPayloadJson,
+      outputPayloadJson: computedOutputPayloadJson,
     });
+    const llmRequestMetadata = {
+      route: "dataset_example_field_generation",
+      configurationName: selectedLlmConfiguration?.name ?? null,
+      model: selectedLlmConfiguration?.chatModel ?? null,
+      systemPromptApplied: false,
+      promptTemplate: mapping.llmPromptText,
+      usedTokens: llmPromptPreview.usedTokens,
+      unresolvedTokens: llmPromptPreview.unresolvedTokens,
+    } satisfies JsonValue;
     const llmGeneratedAt = formatDateTime(
       typeof llmGenerationMeta?.generatedAt === "string"
         ? llmGenerationMeta.generatedAt
@@ -814,6 +981,48 @@ export function DatasetExampleEditor(props: {
               </select>
             </label>
           </div>
+
+          {templateMode ? (
+            <section className="dataset-mapping-template-panel mt-5">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="dataset-mapping-eyebrow">Variables reutilizables</p>
+                  <p className="mt-2 text-sm text-[var(--muted)]">
+                    Inserta variables arriba del editor para armar{" "}
+                    {templateMode === "llm" ? "el prompt" : "el texto manual"} sin ruido.
+                  </p>
+                </div>
+                {renderBadge(templateMode === "llm" ? "prompt LLM" : "texto manual", "accent")}
+              </div>
+
+              <div className="dataset-mapping-token-grid mt-4">
+                {DATASET_LLM_PROMPT_TOKEN_DEFINITIONS.map((definition) => (
+                  <button
+                    key={definition.key}
+                    type="button"
+                    className="dataset-mapping-chip dataset-mapping-chip-toggle dataset-mapping-chip-active dataset-mapping-token-button"
+                    onClick={() =>
+                      insertTemplateToken(
+                        side,
+                        field.key,
+                        templateMode,
+                        templateMode === "llm" ? mapping.llmPromptText : mapping.manualValueText,
+                        definition.token,
+                      )
+                    }
+                    title={`${definition.description} · Click para insertar`}
+                  >
+                    <span className="font-medium text-[var(--foreground)]">
+                      {definition.label}
+                    </span>
+                    <span className="font-mono text-[0.7rem] text-[var(--muted)]">
+                      {definition.token}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </section>
+          ) : null}
 
           <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
             <div className="space-y-4">
@@ -881,6 +1090,7 @@ export function DatasetExampleEditor(props: {
                       {mapping.sourceKey === "constant" ? "Valor constante" : "Texto manual"}
                     </FormLabel>
                     <textarea
+                      ref={mapping.sourceKey === "manual" ? templateTextareaRef : null}
                       className="field min-h-40 font-mono text-xs"
                       value={
                         mapping.sourceKey === "constant"
@@ -898,7 +1108,7 @@ export function DatasetExampleEditor(props: {
                       placeholder={
                         mapping.sourceKey === "constant"
                           ? '"valor fijo" o {"clave":"valor"}'
-                          : "Escribe aqui el valor final de este campo."
+                          : 'Puedes escribir texto o JSON. Tambien funcionan variables como {{source.last_user_message}}.'
                       }
                     />
                   </label>
@@ -922,71 +1132,36 @@ export function DatasetExampleEditor(props: {
                     {renderBadge("LLM", "accent")}
                   </div>
 
-                  <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_260px]">
-                    <label className="block space-y-2">
-                      <FormLabel className="dataset-mapping-control-label">
-                        Configuracion global LLM
-                      </FormLabel>
-                      <select
-                        className="field"
-                        value={mapping.llmConfigurationId}
-                        onChange={(event) => {
-                          const nextValue = event.target.value;
-                          updateMapping(side, field.key, (current) => ({
-                            ...current,
-                            llmConfigurationId: nextValue,
-                          }));
-                        }}
-                      >
-                        <option value="">Selecciona una configuracion</option>
-                        {props.llmConfigurations.map((configuration) => (
-                          <option key={configuration.id} value={configuration.id}>
-                            {configuration.name} · {configuration.chatModel}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-
-                    <div className="dataset-mapping-mini-panel">
-                      <p className="dataset-mapping-eyebrow">Variables invocables</p>
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        {DATASET_LLM_PROMPT_TOKEN_DEFINITIONS.map((definition) => (
-                          <button
-                            key={definition.key}
-                            type="button"
-                            className="dataset-mapping-chip dataset-mapping-chip-toggle dataset-mapping-chip-active"
-                            onClick={() =>
-                              insertPromptToken(
-                                side,
-                                field.key,
-                                mapping.llmPromptText,
-                                definition.token,
-                              )
-                            }
-                            title={`${definition.description} · Click para insertar`}
-                          >
-                            <span className="font-medium text-[var(--foreground)]">
-                              {definition.label}
-                            </span>
-                            <span className="ml-2 font-mono text-[0.68rem] text-[var(--muted)]">
-                              {definition.token}
-                            </span>
-                          </button>
-                        ))}
-                      </div>
-                      <p className="mt-3 text-xs leading-6 text-[var(--muted)]">
-                        Nada se envia por defecto. Usa estas variables como guia y haz click para
-                        insertarlas donde quieras dentro del prompt.
-                      </p>
-                    </div>
-                  </div>
+                  <label className="mt-4 block space-y-2">
+                    <FormLabel className="dataset-mapping-control-label">
+                      Configuracion global LLM
+                    </FormLabel>
+                    <select
+                      className="field"
+                      value={mapping.llmConfigurationId}
+                      onChange={(event) => {
+                        const nextValue = event.target.value;
+                        updateMapping(side, field.key, (current) => ({
+                          ...current,
+                          llmConfigurationId: nextValue,
+                        }));
+                      }}
+                    >
+                      <option value="">Selecciona una configuracion</option>
+                      {props.llmConfigurations.map((configuration) => (
+                        <option key={configuration.id} value={configuration.id}>
+                          {configuration.name} · {configuration.chatModel}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
 
                   <label className="mt-4 block space-y-2">
                     <FormLabel className="dataset-mapping-control-label">
                       Instruccion para este campo
                     </FormLabel>
                     <textarea
-                      ref={llmPromptTextareaRef}
+                      ref={templateTextareaRef}
                       className="field min-h-28"
                       value={mapping.llmPromptText}
                       onChange={(event) => {
@@ -1005,12 +1180,35 @@ export function DatasetExampleEditor(props: {
                       Preview del request al modelo
                     </summary>
                     <p className="mt-3 text-xs leading-6 text-[var(--muted)]">
-                      Se enviara exactamente este prompt expandido a partir de tu plantilla. Si
-                      dejas un token desconocido, se conservara tal cual en el request.
+                      El request se separa en metadata tecnica y en el contenido real enviado al
+                      modelo. Si dejas un token desconocido, se conserva tal cual.
                     </p>
-                    <pre className="mt-4 whitespace-pre-wrap break-words rounded-[0.9rem] border border-[var(--line)] bg-white/75 p-4 text-xs leading-6 text-[var(--muted-strong)]">
-                      {prettyJson(llmRequestPreview)}
-                    </pre>
+
+                    <div className="mt-4 grid gap-4">
+                      <PreviewSurface
+                        label="Metadata tecnica"
+                        content={prettyJson(llmRequestMetadata)}
+                        onExpand={() =>
+                          setPreviewModalState({
+                            title: `${field.key} · metadata del request`,
+                            content: prettyJson(llmRequestMetadata),
+                          })
+                        }
+                      />
+
+                      <div className="dataset-request-divider" />
+
+                      <PreviewSurface
+                        label="Content enviado al modelo"
+                        content={llmPromptPreview.promptText}
+                        onExpand={() =>
+                          setPreviewModalState({
+                            title: `${field.key} · content enviado al modelo`,
+                            content: llmPromptPreview.promptText,
+                          })
+                        }
+                      />
+                    </div>
                   </details>
 
                   <label className="mt-4 block space-y-2">
@@ -1334,10 +1532,16 @@ export function DatasetExampleEditor(props: {
               </section>
 
               <section className="dataset-mapping-preview-panel">
-                <FormLabel className="dataset-mapping-control-label">Preview</FormLabel>
-                <pre className="mt-3 overflow-x-auto whitespace-pre-wrap text-xs leading-6 text-[var(--muted-strong)]">
-                  {prettyJson(preview)}
-                </pre>
+                <PreviewSurface
+                  label="Preview"
+                  content={prettyJson(preview)}
+                  onExpand={() =>
+                    setPreviewModalState({
+                      title: `${field.key} · preview del campo`,
+                      content: prettyJson(preview),
+                    })
+                  }
+                />
               </section>
             </aside>
           </div>
@@ -1645,7 +1849,7 @@ export function DatasetExampleEditor(props: {
                         <div className="dataset-stepper-list">
                           {fieldSteps.map((step) => {
                             const resolved = isMeaningfulValue(
-                              resolveFieldMapping(liveSourceSlice, step.mapping),
+                              resolveFieldPreview(step.side, step.field, step.mapping),
                             );
                             const isActive = activeStep.stepKey === step.stepKey;
 
@@ -1902,6 +2106,40 @@ export function DatasetExampleEditor(props: {
           </aside>
         </div>
       </div>
+
+      {previewModalState ? (
+        <div
+          className="dataset-preview-modal-backdrop"
+          role="presentation"
+          onClick={() => setPreviewModalState(null)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={previewModalState.title}
+            className="dataset-preview-modal"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="dataset-preview-modal-header">
+              <div>
+                <p className="dataset-mapping-eyebrow">Vista completa</p>
+                <h3 className="mt-2 text-lg font-semibold text-[var(--foreground)]">
+                  {previewModalState.title}
+                </h3>
+              </div>
+              <button
+                type="button"
+                className="button-secondary"
+                onClick={() => setPreviewModalState(null)}
+              >
+                Cerrar
+              </button>
+            </div>
+
+            <pre className="dataset-preview-modal-content">{previewModalState.content}</pre>
+          </div>
+        </div>
+      ) : null}
     </form>
   );
 }

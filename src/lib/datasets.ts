@@ -1,6 +1,7 @@
 import type { DatasetSpec, SourceSlice } from "@prisma/client";
 import {
   DEFAULT_DATASET_LLM_CONTEXT_SELECTION,
+  buildDatasetFieldGenerationPrompt,
   normalizeDatasetLlmContextSelection,
 } from "@/lib/dataset-llm";
 import type {
@@ -24,6 +25,20 @@ type MessageInput = {
   orderIndex: number;
   createdAt: Date | string;
   metadataJson?: unknown;
+};
+
+export type DatasetTemplateRenderContext = {
+  side: "input" | "output";
+  field: DatasetSchemaField;
+  datasetSpecName: string;
+  datasetSpecSlug: string;
+  datasetSpecDescription: string;
+  inputPayloadJson: string;
+  outputPayloadJson: string;
+};
+
+type DatasetResolveOptions = {
+  templateContext?: DatasetTemplateRenderContext;
 };
 
 function isJsonObject(value: JsonValue): value is JsonObject {
@@ -93,6 +108,17 @@ export function toConversationSlice(messages: MessageInput[]): ConversationSlice
         : message.createdAt.toISOString(),
     metadataJson: (message.metadataJson as JsonValue | null | undefined) ?? null,
   }));
+}
+
+export function toCompactConversationSlice(messages: ConversationSliceItem[]) {
+  return messages.map((message) => ({
+    role: message.role,
+    text: message.text,
+  }));
+}
+
+export function stringifyCompactConversationSlice(messages: ConversationSliceItem[]) {
+  return JSON.stringify(toCompactConversationSlice(messages), null, 2);
 }
 
 export function deriveLastUserMessage(conversationSlice: ConversationSliceItem[]) {
@@ -192,6 +218,7 @@ export function getValueAtPath(
 function resolveSourceValue(
   sourceSlice: SourceSliceRecord,
   mapping: DatasetFieldMappingRecord,
+  options?: DatasetResolveOptions,
 ): JsonValue | undefined {
   const sourceMetadata = sourceSlice.sourceMetadata as SourceSliceMetadata;
 
@@ -199,9 +226,9 @@ function resolveSourceValue(
     case "source.last_user_message":
       return sourceSlice.lastUserMessage;
     case "source.conversation_slice":
-      return sourceSlice.conversationSlice as unknown as JsonValue;
+      return toCompactConversationSlice(sourceSlice.conversationSlice) as unknown as JsonValue;
     case "source.surrounding_context":
-      return sourceSlice.surroundingContext as unknown as JsonValue;
+      return toCompactConversationSlice(sourceSlice.surroundingContext) as unknown as JsonValue;
     case "source.source_summary":
       return sourceSlice.sourceSummary;
     case "source.session_notes":
@@ -212,8 +239,27 @@ function resolveSourceValue(
       return parseValueText(mapping.ragGeneratedValueText);
     case "constant":
       return parseValueText(mapping.constantValueText);
-    case "manual":
-      return parseValueText(mapping.manualValueText);
+    case "manual": {
+      const nextManualValue = options?.templateContext
+        ? buildDatasetFieldGenerationPrompt({
+            side: options.templateContext.side,
+            field: options.templateContext.field,
+            datasetSpecName: options.templateContext.datasetSpecName,
+            datasetSpecSlug: options.templateContext.datasetSpecSlug,
+            datasetSpecDescription: options.templateContext.datasetSpecDescription,
+            promptText: mapping.manualValueText,
+            lastUserMessage: sourceSlice.lastUserMessage,
+            sourceSummary: sourceSlice.sourceSummary,
+            sessionNotes: sourceMetadata.session_notes ?? "",
+            conversationSliceJson: stringifyCompactConversationSlice(sourceSlice.conversationSlice),
+            surroundingContextJson: stringifyCompactConversationSlice(sourceSlice.surroundingContext),
+            inputPayloadJson: options.templateContext.inputPayloadJson,
+            outputPayloadJson: options.templateContext.outputPayloadJson,
+          }).promptText
+        : mapping.manualValueText;
+
+      return parseValueText(nextManualValue);
+    }
     default:
       return undefined;
   }
@@ -321,8 +367,9 @@ function applyTransform(
 export function resolveFieldMapping(
   sourceSlice: SourceSliceRecord,
   mapping: DatasetFieldMappingRecord,
+  options?: DatasetResolveOptions,
 ): JsonValue | undefined {
-  let resolvedValue = resolveSourceValue(sourceSlice, mapping);
+  let resolvedValue = resolveSourceValue(sourceSlice, mapping, options);
 
   if (mapping.sourcePath.trim()) {
     resolvedValue = getValueAtPath(resolvedValue, mapping.sourcePath);
@@ -340,6 +387,10 @@ export function buildPayloadFromMappings(input: {
   sourceSlice: SourceSliceRecord;
   schema: DatasetSchemaField[];
   mappings: DatasetFieldMappingRecord[];
+  templateContextFactory?: (
+    field: DatasetSchemaField,
+    side: "input" | "output",
+  ) => DatasetTemplateRenderContext | undefined;
 }) {
   return input.schema.reduce<JsonObject>((payload, field) => {
     const mapping = input.mappings.find(
@@ -350,7 +401,9 @@ export function buildPayloadFromMappings(input: {
       return payload;
     }
 
-    const resolvedValue = resolveFieldMapping(input.sourceSlice, mapping);
+    const resolvedValue = resolveFieldMapping(input.sourceSlice, mapping, {
+      templateContext: input.templateContextFactory?.(field, input.side),
+    });
 
     if (resolvedValue !== undefined) {
       payload[field.key] = resolvedValue;
