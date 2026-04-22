@@ -340,6 +340,7 @@ export type DatasetFieldMappingRecord = {
   llmGenerationMeta?: JsonValue;
   ragConfigurationId: string;
   ragPromptText: string;
+  ragTopK: number;
   ragGeneratedValueText: string;
   ragGenerationMeta?: JsonValue;
   resolvedPreview?: JsonValue;

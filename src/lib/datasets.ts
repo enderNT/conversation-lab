@@ -96,6 +96,24 @@ export function stringifyJsonValue(value: unknown) {
   return JSON.stringify(value, null, 2);
 }
 
+export function normalizeRetrievalTopK(value: unknown) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return 1;
+  }
+
+  const normalizedValue = Math.trunc(value);
+
+  if (normalizedValue < 1) {
+    return 1;
+  }
+
+  if (normalizedValue > 20) {
+    return 20;
+  }
+
+  return normalizedValue;
+}
+
 export function toConversationSlice(messages: MessageInput[]): ConversationSliceItem[] {
   return messages.map((message) => ({
     id: message.id,
@@ -750,6 +768,7 @@ export function buildDefaultMappings(schema: DatasetSchemaField[], side: "input"
       llmGeneratedValueText: "",
       ragConfigurationId: "",
       ragPromptText: "",
+      ragTopK: 1,
       ragGeneratedValueText: "",
     };
   });
@@ -770,11 +789,11 @@ export function hydrateMappingsFromStored(input: {
     llmPromptText?: string | null;
     llmContextSelectionJson?: JsonValue | null;
     llmGeneratedValueJson?: JsonValue | null;
-    llmGenerationMetaJson?: JsonValue | null;
-    ragConfigurationId?: string | null;
-    ragPromptText?: string | null;
-    ragGeneratedValueJson?: JsonValue | null;
-    ragGenerationMetaJson?: JsonValue | null;
+      llmGenerationMetaJson?: JsonValue | null;
+      ragConfigurationId?: string | null;
+      ragPromptText?: string | null;
+      ragGeneratedValueJson?: JsonValue | null;
+      ragGenerationMetaJson?: JsonValue | null;
     resolvedPreviewJson: JsonValue | null;
   }>;
 }) {
@@ -817,6 +836,12 @@ export function hydrateMappingsFromStored(input: {
       llmGenerationMeta: (stored.llmGenerationMetaJson as JsonValue | undefined) ?? undefined,
       ragConfigurationId: stored.ragConfigurationId ?? "",
       ragPromptText: stored.ragPromptText ?? "",
+      ragTopK:
+        isJsonObject(stored.ragGenerationMetaJson as JsonValue)
+          ? normalizeRetrievalTopK(
+              (stored.ragGenerationMetaJson as JsonObject).topK,
+            )
+          : 1,
       ragGeneratedValueText: stringifyJsonValue(stored.ragGeneratedValueJson as JsonValue | undefined),
       ragGenerationMeta: (stored.ragGenerationMetaJson as JsonValue | undefined) ?? undefined,
       resolvedPreview: (stored.resolvedPreviewJson as JsonValue | undefined) ?? undefined,

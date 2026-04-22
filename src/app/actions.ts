@@ -36,6 +36,7 @@ import {
 import {
   buildSourceSliceMetadata,
   deriveLastUserMessage as deriveDatasetLastUserMessage,
+  normalizeRetrievalTopK,
   parseStrictJsonValue as parseStrictDatasetJsonValue,
   resolveFieldMapping,
   sourceSliceFromPrisma,
@@ -230,6 +231,7 @@ const datasetFieldMappingSchema = z.object({
   llmGenerationMeta: z.any().optional(),
   ragConfigurationId: z.string().default(""),
   ragPromptText: z.string().default(""),
+  ragTopK: z.coerce.number().int().min(1).max(20).default(1),
   ragGeneratedValueText: z.string().default(""),
   ragGenerationMeta: z.any().optional(),
 });
@@ -279,20 +281,9 @@ const datasetBatchGenerationSchema = z.object({
 });
 
 const datasetFieldRagGenerationSchema = z.object({
-  ragConfigurationId: z.string().trim().min(1, "Selecciona una configuración RAG global."),
-  side: z.enum(DATASET_FIELD_SIDES),
-  field: datasetSchemaFieldSchema,
-  datasetSpecName: z.string().trim().default(""),
-  datasetSpecSlug: z.string().trim().default(""),
-  datasetSpecDescription: z.string().trim().default(""),
-  promptText: z.string().trim().min(1, "Escribe una instrucción para el campo."),
-  lastUserMessage: z.string().default(""),
-  sourceSummary: z.string().default(""),
-  sessionNotes: z.string().default(""),
-  conversationSliceJson: z.string().trim().default("[]"),
-  surroundingContextJson: z.string().trim().default("[]"),
-  inputPayloadJson: z.string().trim().default("{}"),
-  outputPayloadJson: z.string().trim().default("{}"),
+  ragConfigurationId: z.string().trim().min(1, "Selecciona una configuración de retrieval."),
+  promptText: z.string().trim().min(1, "Escribe una query manual."),
+  topK: z.coerce.number().int().min(1, "Top K mínimo 1.").max(20, "Top K máximo 20."),
 });
 
 function buildActionErrorState(message: string): ActionFormState {
@@ -378,44 +369,8 @@ function parseDatasetJsonObject(value: string, label: string) {
   return parsedValue as JsonObject;
 }
 
-function buildDatasetFieldRagQuery(input: {
-  side: "input" | "output";
-  field: DatasetSchemaField;
-  datasetSpecName: string;
-  datasetSpecSlug: string;
-  datasetSpecDescription: string;
-  promptText: string;
-  lastUserMessage: string;
-  sourceSummary: string;
-  sessionNotes: string;
-  conversationSliceJson: string;
-  surroundingContextJson: string;
-  inputPayloadJson: string;
-  outputPayloadJson: string;
-  llmContextSelection?: Record<string, boolean>;
-}) {
-  return [
-    `Campo destino: ${input.field.key}`,
-    `Lado: ${input.side}`,
-    `Tipo esperado: ${input.field.type}`,
-    input.field.description ? `Descripcion del campo: ${input.field.description}` : "",
-    `Spec: ${input.datasetSpecName || input.datasetSpecSlug || "dataset_spec"}`,
-    input.datasetSpecDescription ? `Descripcion del spec: ${input.datasetSpecDescription}` : "",
-    `Instruccion del operador: ${input.promptText}`,
-    `Ultimo mensaje del usuario: ${input.lastUserMessage || ""}`,
-    `Resumen curatorial: ${input.sourceSummary || ""}`,
-    `Notas de sesion: ${input.sessionNotes || ""}`,
-    "Transcript seleccionado:",
-    input.conversationSliceJson,
-    "Contexto cercano:",
-    input.surroundingContextJson,
-    "Payload input actual:",
-    input.inputPayloadJson,
-    "Payload output actual:",
-    input.outputPayloadJson,
-  ]
-    .filter(Boolean)
-    .join("\n\n");
+function buildDatasetFieldRagQuery(promptText: string) {
+  return promptText.trim();
 }
 
 function parseGeneratedDatasetFieldResponse(rawText: string, field: DatasetSchemaField) {
@@ -3522,6 +3477,18 @@ function buildPersistedMappings(input: {
     const manualValue = parseLooseJsonValue(mapping.manualValueText);
     const llmGeneratedValue = parseLooseJsonValue(mapping.llmGeneratedValueText);
     const ragGeneratedValue = parseLooseJsonValue(mapping.ragGeneratedValueText);
+    const ragTopK = normalizeRetrievalTopK(mapping.ragTopK);
+    const ragGenerationMeta =
+      mapping.ragGenerationMeta &&
+      typeof mapping.ragGenerationMeta === "object" &&
+      !Array.isArray(mapping.ragGenerationMeta)
+        ? {
+            ...(mapping.ragGenerationMeta as Record<string, JsonValue>),
+            topK: ragTopK,
+          }
+        : ragTopK !== 1
+          ? { topK: ragTopK }
+          : null;
 
     return {
       side: mapping.side as DatasetFieldSide,
@@ -3550,9 +3517,9 @@ function buildPersistedMappings(input: {
       ragGeneratedValueJson:
         ragGeneratedValue === null ? Prisma.JsonNull : (ragGeneratedValue as Prisma.InputJsonValue),
       ragGenerationMetaJson:
-        mapping.ragGenerationMeta === undefined
+        ragGenerationMeta === null
           ? Prisma.JsonNull
-          : (mapping.ragGenerationMeta as Prisma.InputJsonValue),
+          : (ragGenerationMeta as Prisma.InputJsonValue),
       resolvedPreviewJson:
         resolvedPreview === null || resolvedPreview === undefined
           ? Prisma.JsonNull
@@ -3818,26 +3785,15 @@ export async function generateDatasetFieldsWithLlm(input: {
 
 export async function generateDatasetFieldWithRag(input: {
   ragConfigurationId: string;
-  side: "input" | "output";
-  field: DatasetSchemaField;
-  datasetSpecName: string;
-  datasetSpecSlug: string;
-  datasetSpecDescription: string;
   promptText: string;
-  lastUserMessage: string;
-  sourceSummary: string;
-  sessionNotes: string;
-  conversationSliceJson: string;
-  surroundingContextJson: string;
-  inputPayloadJson: string;
-  outputPayloadJson: string;
+  topK: number;
 }) {
   const parsed = datasetFieldRagGenerationSchema.safeParse(input);
 
   if (!parsed.success) {
     return {
       ok: false as const,
-      error: getActionErrorMessage(parsed.error, "No fue posible preparar la consulta RAG."),
+      error: getActionErrorMessage(parsed.error, "No fue posible preparar la consulta de retrieval."),
     };
   }
 
@@ -3862,26 +3818,26 @@ export async function generateDatasetFieldWithRag(input: {
   } catch (error) {
     return {
       ok: false as const,
-      error: getActionErrorMessage(error, "No fue posible cargar la configuración RAG."),
+      error: getActionErrorMessage(error, "No fue posible cargar la configuración de retrieval."),
     };
   }
 
   if (!ragConfiguration) {
     return {
       ok: false as const,
-      error: "La configuración RAG seleccionada ya no existe.",
+      error: "La configuración de retrieval seleccionada ya no existe.",
     };
   }
 
-  const queryText = buildDatasetFieldRagQuery(parsed.data);
+  const queryText = buildDatasetFieldRagQuery(parsed.data.promptText);
 
   try {
     if (!ragConfiguration.embeddingBaseUrl) {
-      throw new Error("La configuración RAG no tiene URL de proveedor de embeddings.");
+      throw new Error("La configuración de retrieval no tiene URL de proveedor de embeddings.");
     }
 
     if (!ragConfiguration.embeddingModel) {
-      throw new Error("La configuración RAG no tiene modelo de embeddings.");
+      throw new Error("La configuración de retrieval no tiene modelo de embeddings.");
     }
 
     const embedding = await createEmbedding({
@@ -3898,20 +3854,25 @@ export async function generateDatasetFieldWithRag(input: {
       vectorName: ragConfiguration.vectorName,
       queryVector: embedding.vector,
       payloadPath: ragConfiguration.payloadPath,
+      limit: parsed.data.topK,
     });
 
-    if (!result.point) {
+    if (!result.point || result.values.length === 0) {
       return {
         ok: false as const,
-        error: "Qdrant no devolvió resultados para esta consulta.",
+        error: "No se encontraron resultados para esa query manual.",
       };
     }
 
     const generatedAt = new Date().toISOString();
+    const value =
+      parsed.data.topK === 1
+        ? result.values[0]
+        : (result.values as JsonValue);
 
     return {
       ok: true as const,
-      valueText: stringifyJsonValue(result.value),
+      valueText: stringifyJsonValue(value),
       metadata: {
         configurationId: ragConfiguration.id,
         configurationName: ragConfiguration.name,
@@ -3920,16 +3881,22 @@ export async function generateDatasetFieldWithRag(input: {
         embeddingModel: ragConfiguration.embeddingModel,
         payloadPath: ragConfiguration.payloadPath,
         generatedAt,
-        queryText: parsed.data.promptText,
+        queryText,
+        topK: parsed.data.topK,
+        resultCount: result.points.length,
         score: typeof result.point.score === "number" ? result.point.score : null,
         pointId: result.point.id ?? null,
-        retrievalMode: "qdrant_top_1",
+        scores: result.points.map((point) =>
+          typeof point.score === "number" ? point.score : null,
+        ),
+        pointIds: result.points.map((point) => point.id ?? null),
+        retrievalMode: parsed.data.topK === 1 ? "manual_query_top_1" : "manual_query_top_k",
       } satisfies JsonValue,
     };
   } catch (error) {
     return {
       ok: false as const,
-      error: getActionErrorMessage(error, "No fue posible recuperar el valor desde Qdrant."),
+      error: getActionErrorMessage(error, "No fue posible recuperar conocimiento desde Qdrant."),
     };
   }
 }

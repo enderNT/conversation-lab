@@ -119,21 +119,26 @@ export async function queryQdrantTopPoint(input: {
   queryModel?: string | null;
   queryVector?: number[] | null;
   payloadPath?: string | null;
+  limit?: number;
 }) {
   const collectionName = input.collectionName.trim();
   const queryText = input.queryText?.trim() ?? "";
   const queryVector = input.queryVector?.filter((value) => Number.isFinite(value)) ?? [];
+  const limit =
+    typeof input.limit === "number" && Number.isFinite(input.limit)
+      ? Math.max(1, Math.min(20, Math.trunc(input.limit)))
+      : 1;
 
   if (!collectionName) {
     throw new Error("Define una colección de Qdrant.");
   }
 
   if (!queryText && queryVector.length === 0) {
-    throw new Error("La consulta RAG no puede estar vacía.");
+    throw new Error("La consulta de retrieval no puede estar vacía.");
   }
 
   const body: Record<string, unknown> = {
-    limit: 1,
+    limit,
     with_payload: true,
     query:
       queryVector.length > 0
@@ -178,19 +183,29 @@ export async function queryQdrantTopPoint(input: {
     };
   };
 
-  const point = payload.result?.points?.[0];
+  const points = payload.result?.points ?? [];
+  const point = points[0];
 
   if (!point) {
     return {
       point: null,
+      points: [],
       value: undefined,
+      values: [],
     };
   }
 
-  const extractedValue = getValueAtPath(point.payload, input.payloadPath?.trim() ?? "");
+  const values = points.map((candidate) => {
+    const extractedValue = getValueAtPath(candidate.payload, input.payloadPath?.trim() ?? "");
+    const resolvedValue = extractedValue === undefined ? candidate.payload : extractedValue;
+
+    return resolvedValue === undefined ? null : resolvedValue;
+  });
 
   return {
     point,
-    value: extractedValue === undefined ? point.payload : extractedValue,
+    points,
+    value: values[0],
+    values,
   };
 }
