@@ -565,6 +565,201 @@ function parseArtifactList(value: string) {
   );
 }
 
+type NormalizedDatasetSpecInput = {
+  name: string;
+  slug: string;
+  description: string;
+  datasetFormat: DatasetFormat;
+  inputSchemaJson: Prisma.InputJsonValue;
+  outputSchemaJson: Prisma.InputJsonValue;
+  mappingHintsJson: Prisma.InputJsonValue;
+  validationRulesJson: Prisma.InputJsonValue;
+  exportConfigJson: Prisma.InputJsonValue;
+  version: number;
+  isActive: boolean;
+  updatedBy: string;
+};
+
+function normalizeDatasetSpecInput(input: z.infer<typeof datasetSpecSchema>): NormalizedDatasetSpecInput {
+  return {
+    name: input.name,
+    slug: input.slug,
+    description: input.description,
+    datasetFormat: input.datasetFormat,
+    inputSchemaJson: parseDatasetSchemaText(input.inputSchemaJson) as Prisma.InputJsonValue,
+    outputSchemaJson: parseDatasetSchemaText(input.outputSchemaJson) as Prisma.InputJsonValue,
+    mappingHintsJson: parseStrictDatasetJsonValue(input.mappingHintsJson) as Prisma.InputJsonValue,
+    validationRulesJson: parseStrictDatasetJsonValue(input.validationRulesJson) as Prisma.InputJsonValue,
+    exportConfigJson: parseStrictDatasetJsonValue(input.exportConfigJson) as Prisma.InputJsonValue,
+    version: input.version,
+    isActive: input.isActive,
+    updatedBy: input.updatedBy,
+  };
+}
+
+function stripDatasetSpecVersionSuffix(slug: string) {
+  return slug.replace(/_v\d+$/, "");
+}
+
+function hasDatasetSpecVersionedChanges(
+  currentSpec: {
+    name: string;
+    slug: string;
+    description: string;
+    datasetFormat: DatasetFormat;
+    inputSchemaJson: Prisma.JsonValue;
+    outputSchemaJson: Prisma.JsonValue;
+    mappingHintsJson: Prisma.JsonValue;
+    validationRulesJson: Prisma.JsonValue;
+    exportConfigJson: Prisma.JsonValue;
+    version: number;
+  },
+  nextSpec: NormalizedDatasetSpecInput,
+) {
+  return JSON.stringify({
+    name: currentSpec.name,
+    slug: currentSpec.slug,
+    description: currentSpec.description,
+    datasetFormat: currentSpec.datasetFormat,
+    inputSchemaJson: currentSpec.inputSchemaJson,
+    outputSchemaJson: currentSpec.outputSchemaJson,
+    mappingHintsJson: currentSpec.mappingHintsJson,
+    validationRulesJson: currentSpec.validationRulesJson,
+    exportConfigJson: currentSpec.exportConfigJson,
+    version: currentSpec.version,
+  }) !==
+    JSON.stringify({
+      name: nextSpec.name,
+      slug: nextSpec.slug,
+      description: nextSpec.description,
+      datasetFormat: nextSpec.datasetFormat,
+      inputSchemaJson: nextSpec.inputSchemaJson,
+      outputSchemaJson: nextSpec.outputSchemaJson,
+      mappingHintsJson: nextSpec.mappingHintsJson,
+      validationRulesJson: nextSpec.validationRulesJson,
+      exportConfigJson: nextSpec.exportConfigJson,
+      version: nextSpec.version,
+    });
+}
+
+async function buildNextDatasetSpecVersionSlug(baseSlug: string, version: number) {
+  const normalizedBaseSlug = stripDatasetSpecVersionSuffix(baseSlug);
+  let candidateVersion = Math.max(2, version);
+
+  while (true) {
+    const candidateSlug = `${normalizedBaseSlug}_v${candidateVersion}`;
+    const existing = await prisma.datasetSpec.findUnique({
+      where: { slug: candidateSlug },
+      select: { id: true },
+    });
+
+    if (!existing) {
+      return {
+        slug: candidateSlug,
+        version: candidateVersion,
+      };
+    }
+
+    candidateVersion += 1;
+  }
+}
+
+async function updateDatasetSpecRecord(
+  datasetSpecId: string,
+  input: NormalizedDatasetSpecInput,
+) {
+  const currentSpec = await prisma.datasetSpec.findUnique({
+    where: { id: datasetSpecId },
+    select: {
+      id: true,
+      name: true,
+      slug: true,
+      description: true,
+      datasetFormat: true,
+      inputSchemaJson: true,
+      outputSchemaJson: true,
+      mappingHintsJson: true,
+      validationRulesJson: true,
+      exportConfigJson: true,
+      version: true,
+      _count: {
+        select: {
+          datasetExamples: true,
+        },
+      },
+    },
+  });
+
+  if (!currentSpec) {
+    throw new Error("El dataset spec ya no existe.");
+  }
+
+  const hasVersionedChanges = hasDatasetSpecVersionedChanges(currentSpec, input);
+
+  if (!hasVersionedChanges || currentSpec._count.datasetExamples === 0) {
+    await prisma.datasetSpec.update({
+      where: { id: datasetSpecId },
+      data: {
+        name: input.name,
+        slug: input.slug,
+        description: input.description,
+        datasetFormat: input.datasetFormat,
+        inputSchemaJson: input.inputSchemaJson,
+        outputSchemaJson: input.outputSchemaJson,
+        mappingHintsJson: input.mappingHintsJson,
+        validationRulesJson: input.validationRulesJson,
+        exportConfigJson: input.exportConfigJson,
+        isActive: input.isActive,
+        version: input.version,
+        updatedBy: input.updatedBy,
+      },
+    });
+
+    return {
+      mode: "updated_in_place" as const,
+      message: "Dataset spec actualizado correctamente.",
+    };
+  }
+
+  const nextVersionData = await buildNextDatasetSpecVersionSlug(
+    input.slug,
+    Math.max(input.version, currentSpec.version + 1),
+  );
+
+  await prisma.$transaction(async (tx) => {
+    await tx.datasetSpec.update({
+      where: { id: datasetSpecId },
+      data: {
+        isActive: false,
+        updatedBy: input.updatedBy,
+      },
+    });
+
+    await tx.datasetSpec.create({
+      data: {
+        name: input.name,
+        slug: nextVersionData.slug,
+        description: input.description,
+        datasetFormat: input.datasetFormat,
+        inputSchemaJson: input.inputSchemaJson,
+        outputSchemaJson: input.outputSchemaJson,
+        mappingHintsJson: input.mappingHintsJson,
+        validationRulesJson: input.validationRulesJson,
+        exportConfigJson: input.exportConfigJson,
+        isActive: input.isActive,
+        version: nextVersionData.version,
+        createdBy: input.updatedBy,
+        updatedBy: input.updatedBy,
+      },
+    });
+  });
+
+  return {
+    mode: "versioned" as const,
+    message: `Se creó una nueva versión del dataset spec (${nextVersionData.slug}) y la anterior quedó archivada.`,
+  };
+}
+
 function extractCaseArtifacts(
   formData: FormData,
 ): Prisma.CaseArtifactCreateWithoutCaseInput[] {
@@ -3755,27 +3950,12 @@ export async function createDatasetSpec(formData: FormData) {
     updatedBy: asOptionalString(formData.get("updatedBy")) || "human",
   });
 
-  const inputSchema = parseDatasetSchemaText(parsed.inputSchemaJson);
-  const outputSchema = parseDatasetSchemaText(parsed.outputSchemaJson);
-  const mappingHintsJson = parseStrictDatasetJsonValue(parsed.mappingHintsJson);
-  const validationRulesJson = parseStrictDatasetJsonValue(parsed.validationRulesJson);
-  const exportConfigJson = parseStrictDatasetJsonValue(parsed.exportConfigJson);
+  const normalized = normalizeDatasetSpecInput(parsed);
 
   await prisma.datasetSpec.create({
     data: {
-      name: parsed.name,
-      slug: parsed.slug,
-      description: parsed.description,
-      datasetFormat: parsed.datasetFormat,
-      inputSchemaJson: inputSchema as Prisma.InputJsonValue,
-      outputSchemaJson: outputSchema as Prisma.InputJsonValue,
-      mappingHintsJson: mappingHintsJson as Prisma.InputJsonValue,
-      validationRulesJson: validationRulesJson as Prisma.InputJsonValue,
-      exportConfigJson: exportConfigJson as Prisma.InputJsonValue,
-      isActive: parsed.isActive,
-      version: parsed.version,
-      createdBy: parsed.updatedBy,
-      updatedBy: parsed.updatedBy,
+      ...normalized,
+      createdBy: normalized.updatedBy,
     },
   });
 
@@ -3807,21 +3987,12 @@ export async function createDatasetSpecWithFeedback(
   }
 
   try {
+    const normalized = normalizeDatasetSpecInput(parsed.data);
+
     await prisma.datasetSpec.create({
       data: {
-        name: parsed.data.name,
-        slug: parsed.data.slug,
-        description: parsed.data.description,
-        datasetFormat: parsed.data.datasetFormat,
-        inputSchemaJson: parseDatasetSchemaText(parsed.data.inputSchemaJson) as Prisma.InputJsonValue,
-        outputSchemaJson: parseDatasetSchemaText(parsed.data.outputSchemaJson) as Prisma.InputJsonValue,
-        mappingHintsJson: parseStrictDatasetJsonValue(parsed.data.mappingHintsJson) as Prisma.InputJsonValue,
-        validationRulesJson: parseStrictDatasetJsonValue(parsed.data.validationRulesJson) as Prisma.InputJsonValue,
-        exportConfigJson: parseStrictDatasetJsonValue(parsed.data.exportConfigJson) as Prisma.InputJsonValue,
-        isActive: parsed.data.isActive,
-        version: parsed.data.version,
-        createdBy: parsed.data.updatedBy,
-        updatedBy: parsed.data.updatedBy,
+        ...normalized,
+        createdBy: normalized.updatedBy,
       },
     });
   } catch (error) {
@@ -3853,23 +4024,7 @@ export async function updateDatasetSpec(datasetSpecId: string, formData: FormDat
     updatedBy: asOptionalString(formData.get("updatedBy")) || "human",
   });
 
-  await prisma.datasetSpec.update({
-    where: { id: datasetSpecId },
-    data: {
-      name: parsed.name,
-      slug: parsed.slug,
-      description: parsed.description,
-      datasetFormat: parsed.datasetFormat,
-      inputSchemaJson: parseDatasetSchemaText(parsed.inputSchemaJson) as Prisma.InputJsonValue,
-      outputSchemaJson: parseDatasetSchemaText(parsed.outputSchemaJson) as Prisma.InputJsonValue,
-      mappingHintsJson: parseStrictDatasetJsonValue(parsed.mappingHintsJson) as Prisma.InputJsonValue,
-      validationRulesJson: parseStrictDatasetJsonValue(parsed.validationRulesJson) as Prisma.InputJsonValue,
-      exportConfigJson: parseStrictDatasetJsonValue(parsed.exportConfigJson) as Prisma.InputJsonValue,
-      isActive: parsed.isActive,
-      version: parsed.version,
-      updatedBy: parsed.updatedBy,
-    },
-  });
+  await updateDatasetSpecRecord(datasetSpecId, normalizeDatasetSpecInput(parsed));
 
   revalidateDatasetPaths();
   redirect("/dataset-specs");
@@ -3900,31 +4055,65 @@ export async function updateDatasetSpecWithFeedback(
   }
 
   try {
-    await prisma.datasetSpec.update({
-      where: { id: datasetSpecId },
-      data: {
-        name: parsed.data.name,
-        slug: parsed.data.slug,
-        description: parsed.data.description,
-        datasetFormat: parsed.data.datasetFormat,
-        inputSchemaJson: parseDatasetSchemaText(parsed.data.inputSchemaJson) as Prisma.InputJsonValue,
-        outputSchemaJson: parseDatasetSchemaText(parsed.data.outputSchemaJson) as Prisma.InputJsonValue,
-        mappingHintsJson: parseStrictDatasetJsonValue(parsed.data.mappingHintsJson) as Prisma.InputJsonValue,
-        validationRulesJson: parseStrictDatasetJsonValue(parsed.data.validationRulesJson) as Prisma.InputJsonValue,
-        exportConfigJson: parseStrictDatasetJsonValue(parsed.data.exportConfigJson) as Prisma.InputJsonValue,
-        isActive: parsed.data.isActive,
-        version: parsed.data.version,
-        updatedBy: parsed.data.updatedBy,
-      },
+    const result = await updateDatasetSpecRecord(
+      datasetSpecId,
+      normalizeDatasetSpecInput(parsed.data),
+    );
+
+    revalidateDatasetPaths();
+    return buildActionSuccessState(result.message, {
+      redirectTo: "/dataset-specs",
+      navigationMode: "replace",
     });
   } catch (error) {
     return buildActionErrorState(
       getActionErrorMessage(error, "No fue posible actualizar el dataset spec."),
     );
   }
+}
+
+export async function deleteDatasetSpecWithFeedback(
+  datasetSpecId: string,
+  _previousState: ActionFormState,
+) {
+  void _previousState;
+
+  let datasetSpec;
+
+  try {
+    datasetSpec = await prisma.datasetSpec.findUnique({
+      where: { id: datasetSpecId },
+      select: {
+        name: true,
+        _count: {
+          select: {
+            datasetExamples: true,
+          },
+        },
+      },
+    });
+
+    if (!datasetSpec) {
+      return buildActionErrorState("El dataset spec ya no existe.");
+    }
+
+    if (datasetSpec._count.datasetExamples > 0) {
+      return buildActionErrorState(
+        `No se puede eliminar ${datasetSpec.name} porque ya tiene dataset examples asociados. Crea una nueva versión o archívalo.`,
+      );
+    }
+
+    await prisma.datasetSpec.delete({
+      where: { id: datasetSpecId },
+    });
+  } catch (error) {
+    return buildActionErrorState(
+      getActionErrorMessage(error, "No fue posible eliminar el dataset spec."),
+    );
+  }
 
   revalidateDatasetPaths();
-  return buildActionSuccessState("Dataset spec actualizado correctamente.", {
+  return buildActionSuccessState("Dataset spec eliminado correctamente.", {
     redirectTo: "/dataset-specs",
     navigationMode: "replace",
   });

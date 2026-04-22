@@ -5,6 +5,7 @@ import {
   createDatasetSpecWithFeedback,
   updateDatasetSpecWithFeedback,
 } from "@/app/actions";
+import { DatasetSpecDeleteButton } from "@/components/dataset-spec-delete-button";
 import { FormLabel } from "@/components/form-label";
 import { FormSubmitButton } from "@/components/form-submit-button";
 import { useActionFeedbackToast } from "@/components/use-action-feedback-toast";
@@ -286,6 +287,14 @@ export function DatasetSpecForm({
             </label>
           </div>
         </div>
+
+        {isEditing && datasetSpec.datasetExampleCount > 0 ? (
+          <div className="rounded-[1rem] border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-900">
+            Los cambios de contrato en un dataset spec que ya tiene examples no se aplicarán en
+            sitio. Al guardar se creará una nueva versión y la actual quedará archivada para no
+            romper el histórico.
+          </div>
+        ) : null}
       </section>
 
       <section className="space-y-6">
@@ -398,7 +407,17 @@ export function DatasetSpecForm({
         </div>
       ) : null}
 
-      <div className="sticky bottom-0 -mx-6 flex flex-wrap items-center justify-end gap-3 border-t border-[var(--line)] bg-[color-mix(in_srgb,var(--drawer-background)_88%,white_12%)] px-6 py-4 shadow-[0_-8px_24px_rgba(24,35,47,0.06)] backdrop-blur-xl sm:-mx-8 sm:px-8 lg:-mx-10 lg:px-10">
+      <div className="sticky bottom-0 -mx-6 flex flex-wrap items-center justify-between gap-3 border-t border-[var(--line)] bg-[color-mix(in_srgb,var(--drawer-background)_88%,white_12%)] px-6 py-4 shadow-[0_-8px_24px_rgba(24,35,47,0.06)] backdrop-blur-xl sm:-mx-8 sm:px-8 lg:-mx-10 lg:px-10">
+        <div className="flex flex-wrap items-center gap-3">
+          {isEditing ? (
+            <DatasetSpecDeleteButton
+              datasetSpecId={datasetSpec.id}
+              datasetSpecName={datasetSpec.name}
+            />
+          ) : null}
+        </div>
+
+        <div className="flex flex-wrap items-center justify-end gap-3">
         {onCancel ? (
           <button type="button" className="button-secondary" onClick={onCancel}>
             Cancelar
@@ -413,6 +432,7 @@ export function DatasetSpecForm({
           <span aria-hidden="true">+</span>
           {isEditing ? "Guardar dataset spec" : "Crear dataset spec"}
         </FormSubmitButton>
+        </div>
       </div>
     </form>
   );

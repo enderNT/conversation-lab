@@ -53,24 +53,16 @@ export const DEFAULT_DATASET_SPECS: DatasetSpecDefinition[] = [
 ];
 
 export async function ensureDefaultDatasetSpecs() {
+  const existingCount = await prisma.datasetSpec.count();
+
+  if (existingCount > 0) {
+    return;
+  }
+
   await Promise.all(
     DEFAULT_DATASET_SPECS.map((datasetSpec) =>
-      prisma.datasetSpec.upsert({
-        where: { slug: datasetSpec.slug },
-        update: {
-          name: datasetSpec.name,
-          description: datasetSpec.description,
-          datasetFormat: datasetSpec.datasetFormat,
-          inputSchemaJson: datasetSpec.inputSchema as Prisma.InputJsonValue,
-          outputSchemaJson: datasetSpec.outputSchema as Prisma.InputJsonValue,
-          mappingHintsJson: datasetSpec.mappingHints as Prisma.InputJsonValue,
-          validationRulesJson: datasetSpec.validationRules as Prisma.InputJsonValue,
-          exportConfigJson: datasetSpec.exportConfig as Prisma.InputJsonValue,
-          isActive: datasetSpec.isActive,
-          version: datasetSpec.version,
-          updatedBy: "system",
-        },
-        create: {
+      prisma.datasetSpec.create({
+        data: {
           name: datasetSpec.name,
           slug: datasetSpec.slug,
           description: datasetSpec.description,
