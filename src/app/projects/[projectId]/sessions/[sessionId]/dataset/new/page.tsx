@@ -146,6 +146,7 @@ export default async function NewDatasetExamplePage({
   return (
     <DatasetExampleEditor
       mode="create"
+      datasetExampleId={null}
       backHref={`/projects/${projectId}/sessions/${sessionId}`}
       backLabel="Volver al chat"
       sourceSlice={sourceSlice}

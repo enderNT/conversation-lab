@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { DatasetExampleReviewStatus } from "@prisma/client";
+import { DatasetExampleDeleteButton } from "@/components/dataset-example-delete-button";
 import { StatusBadge } from "@/components/status-badge";
 import { ensureDefaultDatasetSpecs } from "@/lib/dataset-specs";
 import { prisma } from "@/lib/prisma";
@@ -191,9 +192,22 @@ export default async function DatasetExamplesPage({
                   </p>
                 </div>
 
-                <Link href={`/dataset-examples/${datasetExample.id}`} className="button-primary w-full justify-center">
-                  Abrir editor
-                </Link>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Link
+                    href={`/dataset-examples/${datasetExample.id}`}
+                    className="button-primary inline-flex w-full items-center justify-center"
+                  >
+                    Abrir editor
+                  </Link>
+                  <DatasetExampleDeleteButton
+                    datasetExampleId={datasetExample.id}
+                    datasetExampleName={
+                      datasetExample.title || datasetExample.sourceSlice.title || "este dataset example"
+                    }
+                    formClassName="w-full"
+                    buttonClassName="button-danger inline-flex w-full items-center justify-center"
+                  />
+                </div>
               </div>
             </div>
           </article>

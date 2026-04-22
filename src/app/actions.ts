@@ -4217,6 +4217,59 @@ export async function updateDatasetExampleReviewStatusWithFeedback(
   return buildActionRefreshSuccessState("Estado actualizado correctamente.");
 }
 
+export async function deleteDatasetExampleWithFeedback(
+  datasetExampleId: string,
+  _previousState: ActionFormState,
+  formData: FormData,
+) {
+  void _previousState;
+
+  const redirectTo = asOptionalString(formData.get("redirectTo"));
+
+  let datasetExample;
+
+  try {
+    datasetExample = await prisma.datasetExample.findUnique({
+      where: { id: datasetExampleId },
+      select: {
+        sourceSlice: {
+          select: {
+            projectId: true,
+            sessionId: true,
+          },
+        },
+      },
+    });
+
+    if (!datasetExample) {
+      return buildActionErrorState("El dataset example ya no existe.");
+    }
+
+    await prisma.datasetExample.delete({
+      where: { id: datasetExampleId },
+    });
+  } catch (error) {
+    return buildActionErrorState(
+      getActionErrorMessage(error, "No fue posible eliminar el dataset example."),
+    );
+  }
+
+  revalidateDatasetPaths(
+    datasetExample.sourceSlice.projectId,
+    datasetExample.sourceSlice.sessionId,
+    datasetExampleId,
+  );
+
+  if (redirectTo) {
+    return buildActionSuccessState("Dataset example eliminado correctamente.", {
+      redirectTo,
+      navigationMode: "replace",
+    });
+  }
+
+  return buildActionRefreshSuccessState("Dataset example eliminado correctamente.");
+}
+
 export async function exportDatasetExamples(filters?: {
   projectId?: string;
   datasetSpecId?: string;

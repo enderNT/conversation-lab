@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useActionState, useEffect, useMemo, useRef, useState } from "react";
 import { generateDatasetFieldWithLlm, generateDatasetFieldWithRag } from "@/app/actions";
+import { DatasetExampleDeleteButton } from "@/components/dataset-example-delete-button";
 import { FormLabel } from "@/components/form-label";
 import { FormSubmitButton } from "@/components/form-submit-button";
 import { useToast } from "@/components/toast-provider";
@@ -284,6 +285,7 @@ function PreviewSurface(props: {
 
 export function DatasetExampleEditor(props: {
   mode: "create" | "edit";
+  datasetExampleId: string | null;
   backHref: string;
   backLabel: string;
   sourceSlice: SourceSliceRecord;
@@ -595,6 +597,8 @@ export function DatasetExampleEditor(props: {
       kind: inputManualOverride || outputManualOverride ? "warn" : "ok",
     },
   ] as const;
+  const datasetExampleName =
+    title.trim() || sourceTitle.trim() || props.sourceSlice.title.trim() || "este dataset example";
 
   const renderSchemaSummary = () => {
     if (!selectedSpec || !showSchema) {
@@ -1594,8 +1598,8 @@ export function DatasetExampleEditor(props: {
           </div>
         </header>
 
-        <div className="flex min-h-0 flex-1 flex-col xl:grid xl:grid-cols-[20rem_minmax(0,1fr)_18rem]">
-          <aside className="min-h-0 border-b border-[var(--line)] bg-white/80 xl:border-b-0 xl:border-r">
+        <div className="flex min-h-0 flex-1 flex-col xl:grid xl:h-full xl:grid-cols-[20rem_minmax(0,1fr)_18rem]">
+          <aside className="flex min-h-0 flex-col border-b border-[var(--line)] bg-white/80 xl:overflow-hidden xl:border-b-0 xl:border-r">
             <div className="border-b border-[var(--line)] bg-[rgba(250,249,246,0.7)] px-4 py-4 backdrop-blur sm:px-5">
               <h3 className="font-[var(--font-editorial)] text-lg font-semibold text-[var(--accent)]">
                 Transcripcion de Origen
@@ -1605,7 +1609,7 @@ export function DatasetExampleEditor(props: {
               </p>
             </div>
 
-            <div className="flex h-full min-h-0 flex-col overflow-y-auto px-4 py-4 sm:px-5">
+            <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 py-4 sm:px-5">
               <div className="space-y-4">
                 {props.sourceSlice.conversationSlice.map((message) => {
                   const isUser = message.role === "user";
@@ -1746,45 +1750,29 @@ export function DatasetExampleEditor(props: {
                   </div>
                 </div>
 
-                <div className="rounded-[1rem] border border-[var(--line)] bg-white/80 p-4">
-                  <p className="font-[var(--font-label)] text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--muted)]">
-                    Configuraciones LLM globales
-                  </p>
-                  <div className="mt-3 space-y-2 text-sm text-[var(--muted)]">
-                    {props.llmConfigurations.length === 0 ? (
-                      <p>No hay configuraciones LLM guardadas todavia.</p>
-                    ) : (
-                      props.llmConfigurations.slice(0, 4).map((configuration) => (
-                        <p key={configuration.id}>
-                          {configuration.name} · {configuration.chatModel}
-                        </p>
-                      ))
-                    )}
+                {props.mode === "edit" ? (
+                  <div className="rounded-[1rem] border border-[var(--danger-border)] bg-[var(--danger-background)] p-4">
+                    <p className="font-[var(--font-label)] text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--danger-text)]">
+                      Acciones
+                    </p>
+                    <p className="mt-3 text-sm leading-6 text-[var(--muted-strong)]">
+                      Elimina este dataset example si ya no lo necesitas. Los field mappings asociados
+                      también se borrarán.
+                    </p>
+                    <DatasetExampleDeleteButton
+                      datasetExampleId={props.datasetExampleId ?? ""}
+                      datasetExampleName={datasetExampleName}
+                      redirectTo={props.backHref}
+                      formClassName="mt-4"
+                      buttonClassName="button-danger inline-flex w-full items-center justify-center"
+                    />
                   </div>
-                </div>
-
-                <div className="rounded-[1rem] border border-[var(--line)] bg-white/80 p-4">
-                  <p className="font-[var(--font-label)] text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--muted)]">
-                    Configuraciones RAG globales
-                  </p>
-                  <div className="mt-3 space-y-2 text-sm text-[var(--muted)]">
-                    {props.ragConfigurations.length === 0 ? (
-                      <p>No hay configuraciones RAG guardadas todavia.</p>
-                    ) : (
-                      props.ragConfigurations.slice(0, 4).map((configuration) => (
-                        <p key={configuration.id}>
-                          {configuration.name} · {configuration.collectionName}
-                          {configuration.embeddingModel ? ` · ${configuration.embeddingModel}` : ""}
-                        </p>
-                      ))
-                    )}
-                  </div>
-                </div>
+                ) : null}
               </div>
             </div>
           </aside>
 
-          <section className="min-h-0 bg-[#faf9f6] dark:bg-[var(--background)]">
+          <section className="flex min-h-0 flex-col bg-[#faf9f6] xl:overflow-hidden dark:bg-[var(--background)]">
             <div className="sticky top-0 z-10 border-b border-[var(--line)] bg-[rgba(255,255,255,0.82)] px-5 py-5 shadow-sm backdrop-blur sm:px-6">
               <div className="flex items-end justify-between gap-4">
                 <div>
@@ -1810,7 +1798,7 @@ export function DatasetExampleEditor(props: {
               {renderSchemaSummary()}
             </div>
 
-            <div className="h-full overflow-y-auto px-5 py-6 sm:px-6">
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-6 sm:px-6">
               {selectedSpec ? (
                 fieldSteps.length > 0 && activeStep ? (
                   <div className="space-y-6 pb-24">
@@ -1952,7 +1940,7 @@ export function DatasetExampleEditor(props: {
             </div>
           </section>
 
-          <aside className="min-h-0 border-t border-[var(--line)] bg-[rgba(250,249,246,0.86)] xl:border-t-0 xl:border-l">
+          <aside className="flex min-h-0 flex-col border-t border-[var(--line)] bg-[rgba(250,249,246,0.86)] xl:overflow-hidden xl:border-t-0 xl:border-l">
             <div className="border-b border-[var(--line)] bg-white/60 px-4 py-4 backdrop-blur sm:px-5">
               <div className="flex items-center justify-between gap-3">
                 <h3 className="font-[var(--font-editorial)] text-lg font-semibold text-[var(--accent)]">
@@ -1967,7 +1955,7 @@ export function DatasetExampleEditor(props: {
               </div>
             </div>
 
-            <div className="flex h-full min-h-0 flex-col overflow-y-auto px-4 py-4 sm:px-5">
+            <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 py-4 sm:px-5">
               <div className="space-y-6 pb-28">
                 <div className="rounded-[1rem] border border-[var(--line)] bg-white/80 p-4">
                   <div className="flex items-center justify-between gap-3">
@@ -2089,7 +2077,7 @@ export function DatasetExampleEditor(props: {
                 ) : null}
               </div>
 
-              <div className="sticky bottom-0 mt-auto border-t border-[var(--line)] bg-[rgba(250,249,246,0.96)] pb-2 pt-4 backdrop-blur">
+              <div className="sticky bottom-0 z-10 mt-auto border-t border-[var(--line)] bg-[rgba(250,249,246,0.96)] pb-2 pt-4 backdrop-blur">
                 <FormSubmitButton
                   type="submit"
                   className="flex w-full items-center justify-center rounded-xl bg-[#cc5500] px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-[#ff6a00]"

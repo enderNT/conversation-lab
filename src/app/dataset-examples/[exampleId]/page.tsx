@@ -62,6 +62,7 @@ export default async function DatasetExampleDetailPage({
   return (
     <DatasetExampleEditor
       mode="edit"
+      datasetExampleId={datasetExample.id}
       backHref="/dataset-examples"
       backLabel="Volver a dataset examples"
       sourceSlice={sourceSlice}
