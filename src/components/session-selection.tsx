@@ -18,6 +18,7 @@ import {
 } from "@/app/actions";
 import { FormLabel } from "@/components/form-label";
 import { SessionTagPicker } from "@/components/session-tag-picker";
+import { SourceSliceDeleteButton } from "@/components/source-slice-delete-button";
 import { StatusBadge } from "@/components/status-badge";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { useToast } from "@/components/toast-provider";
@@ -38,6 +39,16 @@ type SessionCasePreview = {
   status: string;
   lastUserMessage: string;
   updatedAt: string;
+};
+
+type SavedSourceSlicePreview = {
+  id: string;
+  title: string;
+  lastUserMessage: string;
+  sourceSummary: string;
+  updatedAt: string;
+  linkedExampleCount: number;
+  turnCount: number;
 };
 
 type SessionHistoryPreview = {
@@ -88,6 +99,7 @@ type SessionSelectionProps = {
   availableSessionTags: Array<{ id: string; name: string }>;
   messages: SelectableMessage[];
   recentCases: SessionCasePreview[];
+  savedSlices: SavedSourceSlicePreview[];
   savedLlmConfigurations: SavedLlmConfiguration[];
   chatModel: string;
   chatRuntimeEnabled: boolean;
@@ -114,6 +126,7 @@ export function SessionSelection({
   availableSessionTags = [],
   messages = [],
   recentCases = [],
+  savedSlices = [],
   savedLlmConfigurations = [],
   chatModel = "",
   chatRuntimeEnabled,
@@ -159,7 +172,7 @@ export function SessionSelection({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [activePanel, setActivePanel] = useState<"cases" | "notes" | "tags" | "settings" | null>(null);
-  const [contextTab, setContextTab] = useState<"selection" | "cases">("selection");
+  const [contextTab, setContextTab] = useState<"selection" | "saved" | "cases">("selection");
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
   const [headerMenuPosition, setHeaderMenuPosition] = useState<FloatingMenuPosition | null>(null);
   const [sessionActionsExpanded, setSessionActionsExpanded] = useState(false);
@@ -1855,7 +1868,7 @@ export function SessionSelection({
       <SideDrawer
         open={activePanel === "cases"}
         title="Dataset y selección"
-        description="Revisa el slice activo y consulta los dataset examples recientes sin sacrificar espacio del transcript."
+        description="Revisa la selección activa, reutiliza slices guardados y consulta los dataset examples recientes sin sacrificar espacio del transcript."
         onClose={() => setActivePanel(null)}
       >
         <div className="space-y-6">
@@ -1863,6 +1876,7 @@ export function SessionSelection({
             value={contextTab}
             options={[
               { id: "selection", label: "Selección actual" },
+              { id: "saved", label: "Slices guardados" },
               { id: "cases", label: "Examples recientes" },
             ]}
             onChange={setContextTab}
@@ -1941,6 +1955,66 @@ export function SessionSelection({
                   </p>
                 ) : null}
               </div>
+            </div>
+          ) : contextTab === "saved" ? (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm text-[var(--muted)]">
+                  {savedSlices.length === 0
+                    ? "Esta sesión todavía no tiene slices guardados."
+                    : `${savedSlices.length} slice(s) persistidos en esta sesión.`}
+                </p>
+                {selectionRange ? (
+                  <Link href={caseHref} className="button-secondary">
+                    Guardar selección actual
+                  </Link>
+                ) : null}
+              </div>
+
+              {savedSlices.length === 0 ? (
+                <div className="rounded-[1.5rem] border border-dashed border-[var(--line)] px-4 py-6 text-sm text-[var(--muted)]">
+                  Crea un dataset example desde una selección nueva para que ese slice quede disponible aquí.
+                </div>
+              ) : null}
+
+              {savedSlices.map((sourceSlice) => (
+                <article key={sourceSlice.id} className="rounded-[1.5rem] border border-[var(--line)] bg-white/70 p-4">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <h3 className="text-base font-semibold">{sourceSlice.title}</h3>
+                      <p className="mt-2 text-sm text-[var(--muted)]">
+                        Actualizado {formatDate(sourceSlice.updatedAt)}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2 text-xs text-[var(--muted)]">
+                      <span className="rounded-full border border-[var(--line)] bg-white/80 px-2.5 py-1">
+                        {sourceSlice.turnCount} turno(s)
+                      </span>
+                      <span className="rounded-full border border-[var(--line)] bg-white/80 px-2.5 py-1">
+                        {sourceSlice.linkedExampleCount} example(s)
+                      </span>
+                    </div>
+                  </div>
+
+                  <p className="mt-4 line-clamp-4 text-sm leading-7 text-[var(--muted-strong)]">
+                    {sourceSlice.sourceSummary || sourceSlice.lastUserMessage || "Sin resumen ni mensaje de usuario."}
+                  </p>
+
+                  <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                    <Link
+                      href={`/projects/${projectId}/sessions/${sessionId}/dataset/new?sourceSliceId=${sourceSlice.id}`}
+                      className="button-primary inline-flex items-center justify-center"
+                    >
+                      Crear dataset example
+                    </Link>
+                    <SourceSliceDeleteButton
+                      sourceSliceId={sourceSlice.id}
+                      sourceSliceName={sourceSlice.title}
+                      linkedExampleCount={sourceSlice.linkedExampleCount}
+                    />
+                  </div>
+                </article>
+              ))}
             </div>
           ) : (
             <div className="space-y-4">

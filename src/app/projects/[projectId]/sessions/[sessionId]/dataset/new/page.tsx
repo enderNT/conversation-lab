@@ -1,10 +1,14 @@
 import { notFound } from "next/navigation";
-import { createDatasetExampleWithFeedback } from "@/app/actions";
+import {
+  createDatasetExampleFromSourceSliceWithFeedback,
+  createDatasetExampleWithFeedback,
+} from "@/app/actions";
 import { DatasetExampleEditor } from "@/components/dataset-example-editor";
 import {
   buildSourceSliceMetadata,
   datasetSpecFromPrisma,
   deriveLastUserMessage,
+  sourceSliceFromPrisma,
   toConversationSlice,
 } from "@/lib/datasets";
 import { ensureDefaultDatasetSpecs } from "@/lib/dataset-specs";
@@ -18,54 +22,34 @@ export default async function NewDatasetExamplePage({
   searchParams,
 }: {
   params: Promise<{ projectId: string; sessionId: string }>;
-  searchParams: Promise<{ start?: string; end?: string }>;
+  searchParams: Promise<{ start?: string; end?: string; sourceSliceId?: string }>;
 }) {
   const { projectId, sessionId } = await params;
   const resolvedSearchParams = await searchParams;
   const start = parseInteger(resolvedSearchParams.start);
   const end = parseInteger(resolvedSearchParams.end);
+  const sourceSliceId = resolvedSearchParams.sourceSliceId?.trim() || null;
 
-  if (start === null || end === null || start > end) {
+  const usingSelection = start !== null && end !== null;
+  const usingSavedSourceSlice = !!sourceSliceId;
+
+  if ((usingSelection && usingSavedSourceSlice) || (!usingSelection && !usingSavedSourceSlice)) {
+    notFound();
+  }
+
+  if (usingSelection && start! > end!) {
     notFound();
   }
 
   await ensureDefaultDatasetSpecs();
 
-  const [
-    session,
-    selectedMessages,
-    contextMessages,
-    datasetSpecs,
-    lastUsedDatasetExample,
-    llmConfigurations,
-    ragConfigurations,
-  ] =
+  const [session, datasetSpecs, lastUsedDatasetExample, llmConfigurations, ragConfigurations] =
     await Promise.all([
       prisma.session.findUnique({
         where: { id: sessionId },
         include: {
           project: true,
         },
-      }),
-      prisma.message.findMany({
-        where: {
-          sessionId,
-          orderIndex: {
-            gte: start,
-            lte: end,
-          },
-        },
-        orderBy: { orderIndex: "asc" },
-      }),
-      prisma.message.findMany({
-        where: {
-          sessionId,
-          orderIndex: {
-            gte: Math.max(0, start - 3),
-            lte: end + 3,
-          },
-        },
-        orderBy: { orderIndex: "asc" },
       }),
       prisma.datasetSpec.findMany({
         where: { isActive: true },
@@ -107,34 +91,83 @@ export default async function NewDatasetExamplePage({
     notFound();
   }
 
-  if (selectedMessages.length !== end - start + 1 || selectedMessages.length === 0) {
-    notFound();
+  const sourceSlice = usingSavedSourceSlice
+    ? await prisma.sourceSlice.findUnique({
+        where: { id: sourceSliceId! },
+        select: {
+          id: true,
+          projectId: true,
+          sessionId: true,
+          title: true,
+          conversationSliceJson: true,
+          surroundingContextJson: true,
+          selectedTurnIdsJson: true,
+          lastUserMessage: true,
+          sourceSummary: true,
+          sourceMetadataJson: true,
+        },
+      })
+    : null;
+
+  if (usingSavedSourceSlice) {
+    if (!sourceSlice || sourceSlice.projectId !== projectId || sourceSlice.sessionId !== sessionId) {
+      notFound();
+    }
   }
 
-  const sourceSlice = {
-    projectId,
-    sessionId,
-    title: session.title
-      ? `${session.title} · turnos ${start + 1}-${end + 1}`
-      : `Slice ${start + 1}-${end + 1}`,
-    conversationSlice: toConversationSlice(selectedMessages),
-    surroundingContext: toConversationSlice(
-      contextMessages.filter(
-        (message) => message.orderIndex < start || message.orderIndex > end,
-      ),
-    ),
-    selectedTurnIds: selectedMessages.map((message) => message.id),
-    lastUserMessage: deriveLastUserMessage(toConversationSlice(selectedMessages)),
-    sourceSummary: "",
-    sourceMetadata: buildSourceSliceMetadata({
-      projectId,
-      sessionId,
-      sessionNotes: session.curationNotes ?? "",
-      selectedTurnIds: selectedMessages.map((message) => message.id),
-      startOrderIndex: start,
-      endOrderIndex: end,
-    }),
-  };
+  const sourceSliceDraft = usingSavedSourceSlice
+    ? sourceSliceFromPrisma(sourceSlice!)
+    : await (async () => {
+        const [selectedMessages, contextMessages] = await Promise.all([
+          prisma.message.findMany({
+            where: {
+              sessionId,
+              orderIndex: {
+                gte: start!,
+                lte: end!,
+              },
+            },
+            orderBy: { orderIndex: "asc" },
+          }),
+          prisma.message.findMany({
+            where: {
+              sessionId,
+              orderIndex: {
+                gte: Math.max(0, start! - 3),
+                lte: end! + 3,
+              },
+            },
+            orderBy: { orderIndex: "asc" },
+          }),
+        ]);
+
+        if (selectedMessages.length !== end! - start! + 1 || selectedMessages.length === 0) {
+          notFound();
+        }
+
+        return {
+          projectId,
+          sessionId,
+          title: session.title
+            ? `${session.title} · turnos ${start! + 1}-${end! + 1}`
+            : `Slice ${start! + 1}-${end! + 1}`,
+          conversationSlice: toConversationSlice(selectedMessages),
+          surroundingContext: toConversationSlice(
+            contextMessages.filter((message) => message.orderIndex < start! || message.orderIndex > end!),
+          ),
+          selectedTurnIds: selectedMessages.map((message) => message.id),
+          lastUserMessage: deriveLastUserMessage(toConversationSlice(selectedMessages)),
+          sourceSummary: "",
+          sourceMetadata: buildSourceSliceMetadata({
+            projectId,
+            sessionId,
+            sessionNotes: session.curationNotes ?? "",
+            selectedTurnIds: selectedMessages.map((message) => message.id),
+            startOrderIndex: start!,
+            endOrderIndex: end!,
+          }),
+        };
+      })();
 
   const selectedDatasetSpecId =
     lastUsedDatasetExample?.datasetSpecId ?? datasetSpecs[0]?.id ?? "";
@@ -149,7 +182,7 @@ export default async function NewDatasetExamplePage({
       datasetExampleId={null}
       backHref={`/projects/${projectId}/sessions/${sessionId}`}
       backLabel="Volver al chat"
-      sourceSlice={sourceSlice}
+      sourceSlice={sourceSliceDraft}
       datasetSpecs={datasetSpecs.map(datasetSpecFromPrisma)}
       llmConfigurations={llmConfigurations.map((configuration) => ({
         id: configuration.id,
@@ -170,7 +203,16 @@ export default async function NewDatasetExamplePage({
       initialInputPayload={{}}
       initialOutputPayload={{}}
       initialValidationState={null}
-      action={createDatasetExampleWithFeedback.bind(null, projectId, sessionId, start, end)}
+      action={
+        usingSavedSourceSlice
+          ? createDatasetExampleFromSourceSliceWithFeedback.bind(
+              null,
+              projectId,
+              sessionId,
+              sourceSliceId!,
+            )
+          : createDatasetExampleWithFeedback.bind(null, projectId, sessionId, start!, end!)
+      }
     />
   );
 }

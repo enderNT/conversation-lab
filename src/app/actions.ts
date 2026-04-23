@@ -3467,6 +3467,30 @@ async function loadSourceSliceDraftFromSelection(
   };
 }
 
+async function loadPersistedSourceSlice(projectId: string, sessionId: string, sourceSliceId: string) {
+  const sourceSlice = await prisma.sourceSlice.findUnique({
+    where: { id: sourceSliceId },
+    select: {
+      id: true,
+      projectId: true,
+      sessionId: true,
+      title: true,
+      conversationSliceJson: true,
+      surroundingContextJson: true,
+      selectedTurnIdsJson: true,
+      lastUserMessage: true,
+      sourceSummary: true,
+      sourceMetadataJson: true,
+    },
+  });
+
+  if (!sourceSlice || sourceSlice.projectId !== projectId || sourceSlice.sessionId !== sessionId) {
+    throw new Error("El slice no existe o no pertenece a esta sesión.");
+  }
+
+  return sourceSliceFromPrisma(sourceSlice);
+}
+
 function buildPersistedMappings(input: {
   mappings: DatasetFieldMappingRecord[];
   sourceSlice: ReturnType<typeof sourceSliceFromPrisma> | Awaited<ReturnType<typeof loadSourceSliceDraftFromSelection>>;
@@ -4327,6 +4351,132 @@ export async function createDatasetExampleWithFeedback(
   });
 }
 
+export async function createDatasetExampleFromSourceSliceWithFeedback(
+  projectId: string,
+  sessionId: string,
+  sourceSliceId: string,
+  _previousState: ActionFormState,
+  formData: FormData,
+) {
+  const parsed = datasetExampleSchema.safeParse({
+    datasetSpecId: asOptionalString(formData.get("datasetSpecId")),
+    title: asOptionalString(formData.get("title")),
+    sourceTitle: asOptionalString(formData.get("sourceTitle")),
+    sourceSummary: asOptionalString(formData.get("sourceSummary")),
+    inputPayloadJson: asOptionalString(formData.get("inputPayloadJson")),
+    outputPayloadJson: asOptionalString(formData.get("outputPayloadJson")),
+    mappingsJson: asOptionalString(formData.get("mappingsJson")) || "[]",
+    reviewStatus: formData.get("reviewStatus") || DatasetExampleReviewStatus.draft,
+    updatedBy: asOptionalString(formData.get("updatedBy")) || "human",
+  });
+
+  if (!parsed.success) {
+    return buildActionErrorState(getActionErrorMessage(parsed.error, "No fue posible guardar el dataset example."));
+  }
+
+  let sourceSlice;
+  let datasetSpec;
+  let inputPayload;
+  let outputPayload;
+  let mappings;
+
+  try {
+    await ensureDefaultDatasetSpecs();
+    [sourceSlice, datasetSpec] = await Promise.all([
+      loadPersistedSourceSlice(projectId, sessionId, sourceSliceId),
+      prisma.datasetSpec.findUnique({
+        where: { id: parsed.data.datasetSpecId },
+      }),
+    ]);
+    inputPayload = parseDatasetJsonObject(parsed.data.inputPayloadJson, "Input payload");
+    outputPayload = parseDatasetJsonObject(parsed.data.outputPayloadJson, "Output payload");
+    mappings = parseDatasetMappingsText(parsed.data.mappingsJson);
+  } catch (error) {
+    return buildActionErrorState(
+      getActionErrorMessage(error, "No fue posible preparar el slice seleccionado."),
+    );
+  }
+
+  if (!datasetSpec) {
+    return buildActionErrorState("El dataset spec seleccionado no existe.");
+  }
+
+  const sourceSliceDraft = {
+    ...sourceSlice,
+    sourceSummary: parsed.data.sourceSummary,
+    title: parsed.data.sourceTitle || sourceSlice.title,
+  };
+  const validationState = validateDatasetExamplePayload({
+    datasetSpec,
+    inputPayload,
+    outputPayload,
+  });
+  const persistedMappings = buildPersistedMappings({
+    mappings,
+    sourceSlice: sourceSliceDraft,
+  });
+
+  let datasetExampleId = "";
+
+  try {
+    const createdDatasetExample = await prisma.$transaction(async (tx) => {
+      await tx.sourceSlice.update({
+        where: { id: sourceSliceId },
+        data: {
+          title: parsed.data.sourceTitle || null,
+          sourceSummary: parsed.data.sourceSummary,
+        },
+      });
+
+      const datasetExample = await tx.datasetExample.create({
+        data: {
+          sourceSliceId,
+          datasetSpecId: datasetSpec.id,
+          title: parsed.data.title || null,
+          inputPayloadJson: inputPayload as Prisma.InputJsonValue,
+          outputPayloadJson: outputPayload as Prisma.InputJsonValue,
+          validationStateJson: validationState as Prisma.InputJsonValue,
+          provenanceJson: {
+            source_slice_id: sourceSliceId,
+            source_session_id: sessionId,
+            selected_turn_ids: sourceSliceDraft.selectedTurnIds,
+            mapping_count: persistedMappings.length,
+            dataset_format: datasetSpec.datasetFormat,
+            edited_by: parsed.data.updatedBy,
+          } as Prisma.InputJsonValue,
+          reviewStatus: parsed.data.reviewStatus,
+          version: datasetSpec.version,
+          createdBy: parsed.data.updatedBy,
+          updatedBy: parsed.data.updatedBy,
+        },
+      });
+
+      for (const mapping of persistedMappings) {
+        await tx.datasetFieldMapping.create({
+          data: {
+            datasetExampleId: datasetExample.id,
+            ...mapping,
+          },
+        });
+      }
+
+      return datasetExample;
+    });
+
+    datasetExampleId = createdDatasetExample.id;
+  } catch (error) {
+    return buildActionErrorState(
+      getActionErrorMessage(error, "No fue posible guardar el dataset example."),
+    );
+  }
+
+  revalidateDatasetPaths(projectId, sessionId, datasetExampleId);
+  return buildActionSuccessState("Dataset example guardado correctamente.", {
+    redirectTo: `/dataset-examples/${datasetExampleId}`,
+    navigationMode: "push",
+  });
+}
+
 export async function updateDatasetExample(datasetExampleId: string, formData: FormData) {
   const parsed = datasetExampleSchema.parse({
     datasetSpecId: asOptionalString(formData.get("datasetSpecId")),
@@ -4659,6 +4809,50 @@ export async function deleteDatasetExampleWithFeedback(
   }
 
   return buildActionRefreshSuccessState("Dataset example eliminado correctamente.");
+}
+
+export async function deleteSourceSliceWithFeedback(
+  sourceSliceId: string,
+  _previousState: ActionFormState,
+) {
+  void _previousState;
+
+  let sourceSlice;
+
+  try {
+    sourceSlice = await prisma.sourceSlice.findUnique({
+      where: { id: sourceSliceId },
+      select: {
+        projectId: true,
+        sessionId: true,
+        _count: {
+          select: {
+            datasetExamples: true,
+          },
+        },
+      },
+    });
+
+    if (!sourceSlice) {
+      return buildActionErrorState("El slice ya no existe.");
+    }
+
+    await prisma.sourceSlice.delete({
+      where: { id: sourceSliceId },
+    });
+  } catch (error) {
+    return buildActionErrorState(
+      getActionErrorMessage(error, "No fue posible eliminar el slice."),
+    );
+  }
+
+  revalidateDatasetPaths(sourceSlice.projectId, sourceSlice.sessionId);
+
+  return buildActionRefreshSuccessState(
+    sourceSlice._count.datasetExamples > 0
+      ? `Slice eliminado junto con ${sourceSlice._count.datasetExamples} dataset example(s) asociados.`
+      : "Slice eliminado correctamente.",
+  );
 }
 
 export async function exportDatasetExamples(filters?: {

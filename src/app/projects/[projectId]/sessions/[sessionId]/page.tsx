@@ -12,7 +12,7 @@ export default async function SessionChatPage({
 }) {
   const { projectId, sessionId } = await params;
 
-  const [session, projectSessions, llmConfigurations, sessionTags, recentDatasetExamples] = await Promise.all([
+  const [session, projectSessions, llmConfigurations, sessionTags, recentDatasetExamples, savedSourceSlices] = await Promise.all([
     prisma.session.findUnique({
       where: { id: sessionId },
       include: {
@@ -73,6 +73,19 @@ export default async function SessionChatPage({
         sourceSlice: {
           select: {
             lastUserMessage: true,
+          },
+        },
+      },
+    }),
+    prisma.sourceSlice.findMany({
+      where: {
+        sessionId,
+      },
+      orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
+      include: {
+        _count: {
+          select: {
+            datasetExamples: true,
           },
         },
       },
@@ -145,6 +158,17 @@ export default async function SessionChatPage({
             status: datasetExample.reviewStatus,
             lastUserMessage: datasetExample.sourceSlice.lastUserMessage,
             updatedAt: datasetExample.updatedAt.toISOString(),
+          }))}
+          savedSlices={savedSourceSlices.map((sourceSlice) => ({
+            id: sourceSlice.id,
+            title: sourceSlice.title || "Slice sin título",
+            lastUserMessage: sourceSlice.lastUserMessage,
+            sourceSummary: sourceSlice.sourceSummary,
+            updatedAt: sourceSlice.updatedAt.toISOString(),
+            linkedExampleCount: sourceSlice._count.datasetExamples,
+            turnCount: Array.isArray(sourceSlice.selectedTurnIdsJson)
+              ? sourceSlice.selectedTurnIdsJson.length
+              : 0,
           }))}
           messages={session.messages.map((message) => ({
             id: message.id,
