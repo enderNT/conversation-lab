@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import { SessionSelection } from "@/components/session-selection";
-import { getChatRuntimeConfiguration } from "@/lib/openai";
+import { getSessionChatRuntimeConfiguration, serializeChatRequest } from "@/lib/session-chat";
 import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
@@ -29,6 +29,12 @@ export default async function SessionChatPage({
           select: {
             sourceSlices: true,
           },
+        },
+        chatRequests: {
+          orderBy: {
+            updatedAt: "desc",
+          },
+          take: 1,
         },
         messages: {
           orderBy: { orderIndex: "asc" },
@@ -96,7 +102,11 @@ export default async function SessionChatPage({
     notFound();
   }
 
-  const chatRuntime = getChatRuntimeConfiguration(session.chatBaseUrl, session.chatApiKey);
+  const chatRuntime = getSessionChatRuntimeConfiguration({
+    transport: session.chatTransport,
+    baseUrl: session.chatBaseUrl,
+    apiKey: session.chatApiKey,
+  });
 
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
@@ -131,6 +141,8 @@ export default async function SessionChatPage({
             id: tag.id,
             name: tag.name,
           }))}
+          chatTransport={session.chatTransport}
+          latestChatRequest={serializeChatRequest(session.chatRequests[0])}
           chatRuntimeEnabled={chatRuntime.enabled}
           chatRuntimeDisabledReason={chatRuntime.disabledReason}
           chatProviderLabel={chatRuntime.providerLabel}

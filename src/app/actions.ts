@@ -1,6 +1,7 @@
 "use server";
 
 import {
+  ChatTransport,
   CaseReviewStatus,
   CaseStatus,
   DatasetExampleReviewStatus,
@@ -58,6 +59,11 @@ import {
   queryQdrantTopPoint,
   testQdrantConnection,
 } from "@/lib/qdrant";
+import {
+  getSessionChatRuntimeConfiguration,
+  normalizeWebhookUrl,
+  sendWebhookAsyncChatRequest,
+} from "@/lib/session-chat";
 import type { ActionFormState } from "@/lib/form-state";
 import { prisma } from "@/lib/prisma";
 import {
@@ -102,6 +108,7 @@ const sessionNotesSchema = z.object({
 });
 
 const sessionChatSettingsSchema = z.object({
+  chatTransport: z.enum(["openai_compatible", "webhook_async"]).default("openai_compatible"),
   chatModel: z.string().trim().default(""),
   chatBaseUrl: z.string().default(""),
   chatApiKey: z.string().default(""),
@@ -817,6 +824,44 @@ function normalizeLlmConfigurationInput(input: z.infer<typeof llmConfigurationSc
   };
 }
 
+function normalizeSessionChatBaseUrl(transport: ChatTransport, value: string) {
+  const trimmedValue = value.trim();
+
+  if (!trimmedValue) {
+    return null;
+  }
+
+  return transport === "webhook_async"
+    ? normalizeWebhookUrl(trimmedValue)
+    : normalizeChatBaseUrl(trimmedValue);
+}
+
+function normalizeSessionChatApiKey(value: string) {
+  return value.trim() || null;
+}
+
+function serializeSelectableMessage(message: {
+  id: string;
+  role: MessageRole;
+  text: string;
+  orderIndex: number;
+  createdAt: Date;
+  metadataJson?: Prisma.JsonValue | null;
+}) {
+  return {
+    id: message.id,
+    role: message.role,
+    text: message.text,
+    orderIndex: message.orderIndex,
+    createdAt: message.createdAt.toISOString(),
+    isEdited:
+      !!message.metadataJson &&
+      typeof message.metadataJson === "object" &&
+      !Array.isArray(message.metadataJson) &&
+      typeof message.metadataJson.editedAt === "string",
+  };
+}
+
 function normalizeRagConfigurationInput(input: z.infer<typeof ragConfigurationSchema>) {
   return {
     name: input.name.trim(),
@@ -1514,6 +1559,7 @@ export async function sendSessionMessage(
     select: {
       id: true,
       projectId: true,
+      chatTransport: true,
       systemPrompt: true,
       chatModel: true,
       chatBaseUrl: true,
@@ -1524,6 +1570,18 @@ export async function sendSessionMessage(
         select: {
           role: true,
           text: true,
+        },
+      },
+      chatRequests: {
+        where: {
+          status: "pending",
+        },
+        orderBy: {
+          createdAt: "desc",
+        },
+        take: 1,
+        select: {
+          id: true,
         },
       },
     },
@@ -1543,14 +1601,138 @@ export async function sendSessionMessage(
     };
   }
 
-  if (!session.chatConnectionVerifiedAt) {
+  if (
+    session.chatTransport === "openai_compatible" &&
+    !session.chatConnectionVerifiedAt
+  ) {
     return {
       ok: false as const,
       error: "La conexión del chat todavía no fue verificada para este modelo.",
     };
   }
 
+  if (session.chatTransport === "webhook_async" && session.chatRequests.length > 0) {
+    return {
+      ok: false as const,
+      error: "Esta sesión ya tiene una solicitud pendiente. Espera la respuesta antes de enviar otro mensaje.",
+    };
+  }
+
   try {
+    if (session.chatTransport === "webhook_async") {
+      const runtime = getSessionChatRuntimeConfiguration({
+        transport: session.chatTransport,
+        baseUrl: session.chatBaseUrl,
+        apiKey: session.chatApiKey,
+      });
+
+      if (!runtime.enabled || !session.chatBaseUrl?.trim()) {
+        return {
+          ok: false as const,
+          error:
+            runtime.disabledReason ||
+            "La configuración del webhook no está lista para usar el chat.",
+        };
+      }
+
+      const userMessageId = crypto.randomUUID();
+      const chatRequestId = crypto.randomUUID();
+      const webhookResponse = await sendWebhookAsyncChatRequest({
+        integrationId: session.chatModel.trim(),
+        webhookUrl: session.chatBaseUrl,
+        apiKey: session.chatApiKey,
+        sessionId,
+        userMessageId,
+        chatRequestId,
+        systemPrompt: session.systemPrompt,
+        history: session.messages.map((message) => ({
+          role: message.role,
+          text: message.text,
+        })),
+        message: {
+          id: userMessageId,
+          role: "user",
+          text: parsed.text,
+        },
+      });
+
+      const createdUserMessage = await prisma.$transaction(async (tx) => {
+        const lastMessage = await tx.message.findFirst({
+          where: { sessionId },
+          orderBy: { orderIndex: "desc" },
+          select: { orderIndex: true },
+        });
+
+        const existingPendingRequest = await tx.chatRequest.findFirst({
+          where: {
+            sessionId,
+            status: "pending",
+          },
+          select: {
+            id: true,
+          },
+        });
+
+        if (existingPendingRequest) {
+          throw new Error("Esta sesión ya tiene una solicitud pendiente. Espera la respuesta antes de enviar otro mensaje.");
+        }
+
+        const nextOrderIndex = (lastMessage?.orderIndex ?? -1) + 1;
+        const userMessage = await tx.message.create({
+          data: {
+            id: userMessageId,
+            sessionId,
+            role: MessageRole.user,
+            text: parsed.text,
+            orderIndex: nextOrderIndex,
+            metadataJson: {
+              source: "session_chat",
+              transport: session.chatTransport,
+            },
+          },
+        });
+
+        await tx.chatRequest.create({
+          data: {
+            id: chatRequestId,
+            sessionId,
+            userMessageId,
+            status: "pending",
+            transport: session.chatTransport,
+            integrationRequestId: webhookResponse.integrationRequestId,
+            requestPayloadJson: webhookResponse.requestPayload,
+            responsePayloadJson:
+              webhookResponse.responsePayloadJson === null
+                ? Prisma.JsonNull
+                : (webhookResponse.responsePayloadJson as Prisma.InputJsonValue),
+          },
+        });
+
+        return userMessage;
+      });
+
+      revalidatePath(`/projects/${projectId}/sessions/${sessionId}`);
+
+      return {
+        ok: true as const,
+        transport: session.chatTransport,
+        userMessage: serializeSelectableMessage(createdUserMessage),
+        chatRequest: {
+          id: chatRequestId,
+          sessionId,
+          userMessageId,
+          status: "pending" as const,
+          transport: session.chatTransport,
+          integrationRequestId: webhookResponse.integrationRequestId,
+          errorMessage: null,
+          responseMessageId: null,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          completedAt: null,
+        },
+      };
+    }
+
     const assistantReply = await generateAssistantReply({
       model: session.chatModel,
       baseUrl: session.chatBaseUrl,
@@ -1619,6 +1801,7 @@ export async function sendSessionMessage(
 
   return {
     ok: true as const,
+    transport: session.chatTransport,
   };
 }
 
@@ -1710,6 +1893,7 @@ export async function retryLastAssistantMessage(projectId: string, sessionId: st
     select: {
       id: true,
       projectId: true,
+      chatTransport: true,
       systemPrompt: true,
       chatModel: true,
       chatBaseUrl: true,
@@ -1731,6 +1915,13 @@ export async function retryLastAssistantMessage(projectId: string, sessionId: st
     return {
       ok: false as const,
       error: "La sesión no existe o no pertenece al proyecto indicado.",
+    };
+  }
+
+  if (session.chatTransport !== "openai_compatible") {
+    return {
+      ok: false as const,
+      error: "El reintento del último mensaje solo está disponible para chats OpenAI-compatible.",
     };
   }
 
@@ -1822,12 +2013,7 @@ export async function retryLastAssistantMessage(projectId: string, sessionId: st
     return {
       ok: true as const,
       message: {
-        id: retriedMessage.id,
-        role: retriedMessage.role,
-        text: retriedMessage.text,
-        orderIndex: retriedMessage.orderIndex,
-        createdAt: retriedMessage.createdAt.toISOString(),
-        isEdited: false,
+        ...serializeSelectableMessage(retriedMessage),
       },
     };
   } catch (error) {
@@ -1959,9 +2145,15 @@ export async function deleteSession(projectId: string, sessionId: string) {
 export async function updateSessionChatModel(
   projectId: string,
   sessionId: string,
-  input: { chatModel: string; chatBaseUrl: string; chatApiKey: string },
+  input: {
+    chatTransport: "openai_compatible" | "webhook_async";
+    chatModel: string;
+    chatBaseUrl: string;
+    chatApiKey: string;
+  },
 ) {
   const parsed = sessionChatSettingsSchema.parse({
+    chatTransport: input.chatTransport,
     chatModel: input.chatModel,
     chatBaseUrl: input.chatBaseUrl,
     chatApiKey: input.chatApiKey,
@@ -1983,13 +2175,15 @@ export async function updateSessionChatModel(
   }
 
   try {
+    const transport = parsed.chatTransport;
     const normalizedModel = parsed.chatModel.trim();
-    const normalizedBaseUrl = normalizeChatBaseUrl(parsed.chatBaseUrl);
-    const normalizedApiKey = parsed.chatApiKey.trim();
+    const normalizedBaseUrl = normalizeSessionChatBaseUrl(transport, parsed.chatBaseUrl);
+    const normalizedApiKey = normalizeSessionChatApiKey(parsed.chatApiKey);
 
     await prisma.session.update({
       where: { id: sessionId },
       data: {
+        chatTransport: transport,
         chatModel: normalizedModel || null,
         chatBaseUrl: normalizedBaseUrl,
         chatApiKey: normalizedApiKey,
@@ -2020,9 +2214,15 @@ export async function updateSessionChatModel(
 export async function verifySessionChatConnection(
   projectId: string,
   sessionId: string,
-  input: { chatModel: string; chatBaseUrl: string; chatApiKey: string },
+  input: {
+    chatTransport: "openai_compatible" | "webhook_async";
+    chatModel: string;
+    chatBaseUrl: string;
+    chatApiKey: string;
+  },
 ) {
   const parsed = sessionChatSettingsSchema.parse({
+    chatTransport: input.chatTransport,
     chatModel: input.chatModel,
     chatBaseUrl: input.chatBaseUrl,
     chatApiKey: input.chatApiKey,
@@ -2043,6 +2243,7 @@ export async function verifySessionChatConnection(
     };
   }
 
+  const transport = parsed.chatTransport;
   const normalizedModel = parsed.chatModel.trim();
   const checkedAt = new Date();
   let normalizedBaseUrl: string | null = null;
@@ -2053,8 +2254,12 @@ export async function verifySessionChatConnection(
       throw new Error("Define un modelo antes de probar la conexión.");
     }
 
-    normalizedBaseUrl = normalizeChatBaseUrl(parsed.chatBaseUrl);
-    normalizedApiKey = parsed.chatApiKey.trim();
+    if (transport !== "openai_compatible") {
+      throw new Error("La verificación manual solo aplica al modo OpenAI-compatible.");
+    }
+
+    normalizedBaseUrl = normalizeSessionChatBaseUrl(transport, parsed.chatBaseUrl);
+    normalizedApiKey = normalizeSessionChatApiKey(parsed.chatApiKey);
     const result = await testOpenAIChatConnection({
       model: normalizedModel,
       baseUrl: normalizedBaseUrl,
@@ -2064,6 +2269,7 @@ export async function verifySessionChatConnection(
     await prisma.session.update({
       where: { id: sessionId },
       data: {
+        chatTransport: transport,
         chatModel: normalizedModel,
         chatBaseUrl: normalizedBaseUrl,
         chatApiKey: normalizedApiKey,
@@ -2091,6 +2297,7 @@ export async function verifySessionChatConnection(
     await prisma.session.update({
       where: { id: sessionId },
       data: {
+        chatTransport: transport,
         chatModel: normalizedModel,
         chatBaseUrl: normalizedBaseUrl,
         chatApiKey: normalizedApiKey,

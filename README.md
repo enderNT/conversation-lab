@@ -66,6 +66,8 @@ bun install
 ```bash
 OPENAI_API_KEY=...
 DATABASE_URL="file:./dev.db"
+APP_BASE_URL="http://localhost:3000"
+CHAT_WEBHOOK_CALLBACK_SECRET=...
 ```
 
 Variables opcionales para proveedores OpenAI-compatible:
@@ -75,10 +77,19 @@ OPENAI_COMPATIBLE=false
 OPENAI_BASE_URL=
 ```
 
+Variables necesarias si usarás `webhook_async` en sesiones:
+
+```bash
+APP_BASE_URL=http://localhost:3000
+CHAT_WEBHOOK_CALLBACK_SECRET=...
+```
+
 - Si `OPENAI_COMPATIBLE=false` o no existe, la app usa OpenAI con su URL por defecto y requiere `OPENAI_API_KEY`.
 - Si `OPENAI_COMPATIBLE=true`, la app usa `OPENAI_BASE_URL` como backend OpenAI-compatible. `OPENAI_API_KEY` queda opcional para los proveedores que no exigen autenticación.
 - El modelo ya no se define en variables de entorno: cada sesión permite guardar su propio identificador de modelo desde la UI.
 - Antes de habilitar el chat, la sesión debe ejecutar una prueba de conexión contra `/models`. Si la prueba falla, el input queda deshabilitado y el error aparece en toast y en la pantalla.
+- Si una sesión usa `webhook_async`, la app envía el mensaje al webhook configurado en esa sesión, espera un `ack` inmediato y recibe la respuesta final por `POST /api/chat/webhook/callback`.
+- `APP_BASE_URL` se usa para construir esa URL pública de callback y `CHAT_WEBHOOK_CALLBACK_SECRET` protege el endpoint inbound con `Authorization: Bearer ...`.
 
 3. Genera cliente Prisma y crea la base SQLite:
 

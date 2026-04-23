@@ -11,6 +11,17 @@ enum MessageRole {
   assistant
 }
 
+enum ChatTransport {
+  openai_compatible
+  webhook_async
+}
+
+enum ChatRequestStatus {
+  pending
+  completed
+  failed
+}
+
 enum CaseStatus {
   draft
   curated
@@ -146,6 +157,7 @@ model Session {
   title     String?
   curationNotes String?
   systemPrompt String?
+  chatTransport ChatTransport @default(openai_compatible)
   chatModel String?
   chatBaseUrl String?
   chatApiKey String?
@@ -155,6 +167,7 @@ model Session {
   createdAt DateTime  @default(now())
   project   Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
   messages  Message[]
+  chatRequests ChatRequest[]
   cases     Case[]
   sourceSlices SourceSlice[]
   tags      SessionTagOnSession[]
@@ -182,8 +195,32 @@ model Message {
   createdAt    DateTime    @default(now())
   metadataJson Json?
   session      Session     @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  initiatedChatRequest ChatRequest? @relation("ChatRequestUserMessage")
+  completedChatRequest ChatRequest? @relation("ChatRequestResponseMessage")
 
   @@unique([sessionId, orderIndex])
+  @@index([sessionId, createdAt])
+}
+
+model ChatRequest {
+  id                   String            @id @default(cuid())
+  sessionId            String
+  userMessageId        String            @unique
+  status               ChatRequestStatus @default(pending)
+  transport            ChatTransport
+  integrationRequestId String?
+  errorMessage         String?
+  requestPayloadJson   Json?
+  responsePayloadJson  Json?
+  responseMessageId    String?           @unique
+  completedAt          DateTime?
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
+  session              Session           @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  userMessage          Message           @relation("ChatRequestUserMessage", fields: [userMessageId], references: [id], onDelete: Cascade)
+  responseMessage      Message?          @relation("ChatRequestResponseMessage", fields: [responseMessageId], references: [id], onDelete: SetNull)
+
+  @@index([sessionId, status, createdAt])
   @@index([sessionId, createdAt])
 }
 

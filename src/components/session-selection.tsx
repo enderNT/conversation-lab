@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { startTransition, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { startTransition, useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createPortal } from "react-dom";
+import type { SerializableChatRequest } from "@/lib/session-chat";
 import {
   clearSessionChat,
   createLlmConfiguration,
@@ -69,6 +70,8 @@ type SavedLlmConfiguration = {
   systemPrompt: string;
 };
 
+type ChatTransportValue = "openai_compatible" | "webhook_async";
+
 type ConfirmState =
   | {
       action: "clear-chat" | "delete-session";
@@ -101,6 +104,8 @@ type SessionSelectionProps = {
   recentCases: SessionCasePreview[];
   savedSlices: SavedSourceSlicePreview[];
   savedLlmConfigurations: SavedLlmConfiguration[];
+  chatTransport: ChatTransportValue;
+  latestChatRequest: SerializableChatRequest | null;
   chatModel: string;
   chatRuntimeEnabled: boolean;
   chatRuntimeDisabledReason: string | null;
@@ -128,6 +133,8 @@ export function SessionSelection({
   recentCases = [],
   savedSlices = [],
   savedLlmConfigurations = [],
+  chatTransport = "openai_compatible",
+  latestChatRequest = null,
   chatModel = "",
   chatRuntimeEnabled,
   chatRuntimeDisabledReason = null,
@@ -145,6 +152,9 @@ export function SessionSelection({
   const router = useRouter();
   const { pushToast } = useToast();
   const [localMessages, setLocalMessages] = useState(messages);
+  const [localChatRequest, setLocalChatRequest] = useState<SerializableChatRequest | null>(
+    latestChatRequest,
+  );
   const [anchorIndex, setAnchorIndex] = useState<number | null>(null);
   const [focusIndex, setFocusIndex] = useState<number | null>(null);
   const [draft, setDraft] = useState("");
@@ -156,6 +166,7 @@ export function SessionSelection({
   const [retryingMessageId, setRetryingMessageId] = useState<string | null>(null);
   const [selectedLlmConfigurationId, setSelectedLlmConfigurationId] = useState("");
   const [newLlmConfigurationName, setNewLlmConfigurationName] = useState("");
+  const [chatTransportDraft, setChatTransportDraft] = useState<ChatTransportValue>(chatTransport);
   const [chatModelDraft, setChatModelDraft] = useState(chatModel);
   const [chatBaseUrlDraft, setChatBaseUrlDraft] = useState(chatBaseUrl);
   const [chatApiKeyDraft, setChatApiKeyDraft] = useState(chatApiKey);
@@ -182,6 +193,7 @@ export function SessionSelection({
   const editTextareaRef = useRef<HTMLTextAreaElement>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
   const headerMenuAnchorRef = useRef<HTMLDivElement>(null);
+  const failedChatRequestToastIdRef = useRef<string | null>(null);
 
   const selectionRange =
     anchorIndex === null || focusIndex === null
@@ -229,7 +241,16 @@ export function SessionSelection({
       ? null
       : localMessages.find((message) => message.id === editingMessageId) ?? null;
   const lastConversationMessage = pendingUserMessage ? null : localMessages.at(-1) ?? null;
+  const pendingAsyncChatRequest =
+    localChatRequest?.transport === "webhook_async" && localChatRequest.status === "pending"
+      ? localChatRequest
+      : null;
+  const failedAsyncChatRequest =
+    localChatRequest?.transport === "webhook_async" && localChatRequest.status === "failed"
+      ? localChatRequest
+      : null;
   const canRetryLastAssistantMessage =
+    chatTransport === "openai_compatible" &&
     lastConversationMessage !== null &&
     lastConversationMessage.role === "assistant" &&
     retryingMessageId === null;
@@ -244,6 +265,14 @@ export function SessionSelection({
   useEffect(() => {
     setLocalMessages(messages);
   }, [messages]);
+
+  useEffect(() => {
+    setLocalChatRequest(latestChatRequest);
+  }, [latestChatRequest]);
+
+  useEffect(() => {
+    setChatTransportDraft(chatTransport);
+  }, [chatTransport]);
 
   useEffect(() => {
     const container = messagesRef.current;
@@ -409,36 +438,101 @@ export function SessionSelection({
     };
   }, [activePanel, confirmState, editConflictState, editingMessageId, headerMenuOpen, historyOpen]);
 
+  const pollChatState = useEffectEvent(async () => {
+    const response = await fetch(`/api/chat/sessions/${sessionId}/state`, {
+      method: "GET",
+      cache: "no-store",
+    });
+
+    if (!response.ok) {
+      return;
+    }
+
+    const payload = (await response.json()) as {
+      messages: SelectableMessage[];
+      chatRequest: SerializableChatRequest | null;
+    };
+
+    setLocalMessages(payload.messages);
+    setLocalChatRequest(payload.chatRequest);
+  });
+
+  useEffect(() => {
+    if (!pendingAsyncChatRequest) {
+      return;
+    }
+
+    void pollChatState();
+    const intervalId = window.setInterval(() => {
+      void pollChatState();
+    }, 2000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [pendingAsyncChatRequest]);
+
+  useEffect(() => {
+    if (!failedAsyncChatRequest) {
+      return;
+    }
+
+    if (failedChatRequestToastIdRef.current === failedAsyncChatRequest.id) {
+      return;
+    }
+
+    failedChatRequestToastIdRef.current = failedAsyncChatRequest.id;
+    pushToast({
+      title: "La integración devolvió un error",
+      description:
+        failedAsyncChatRequest.errorMessage ||
+        "No fue posible completar la respuesta del asistente.",
+      variant: "error",
+      durationMs: 7000,
+    });
+  }, [failedAsyncChatRequest, pushToast]);
+
   function normalizeDraftBaseUrl(value: string) {
     return value.trim().replace(/\/+$/, "");
   }
 
+  const transportIsDirty = chatTransportDraft !== chatTransport;
   const modelIsDirty = chatModelDraft.trim() !== chatModel.trim();
   const baseUrlIsDirty = normalizeDraftBaseUrl(chatBaseUrlDraft) !== normalizeDraftBaseUrl(chatBaseUrl);
   const apiKeyIsDirty = chatApiKeyDraft.trim() !== chatApiKey.trim();
-  const chatSettingsAreDirty = modelIsDirty || baseUrlIsDirty || apiKeyIsDirty;
+  const chatSettingsAreDirty = transportIsDirty || modelIsDirty || baseUrlIsDirty || apiKeyIsDirty;
   const notesAreDirty = curationNotesDraft.trim() !== curationNotes.trim();
   const promptIsDirty = systemPromptDraft.trim() !== systemPrompt.trim();
   const chatModelIsConfigured = chatModelDraft.trim().length > 0;
+  const chatUsesOpenAiCompatibleTransport = chatTransportDraft === "openai_compatible";
   const chatConnectionIsVerified = Boolean(chatConnectionVerifiedAt) && !chatConnectionError;
   const chatEnabled =
     chatRuntimeEnabled &&
     chatModelIsConfigured &&
-    chatConnectionIsVerified &&
+    (!chatUsesOpenAiCompatibleTransport || chatConnectionIsVerified) &&
     !chatSettingsAreDirty;
-  const chatComposerBlocked = editingMessageId !== null || isSavingEdit || retryingMessageId !== null;
+  const chatComposerBlocked =
+    editingMessageId !== null ||
+    isSavingEdit ||
+    retryingMessageId !== null ||
+    pendingAsyncChatRequest !== null;
+  const canUseSavedLlmConfigurations = chatTransportDraft === "openai_compatible";
 
   const chatAvailabilityMessage = !chatRuntimeEnabled
     ? chatRuntimeDisabledReason || "La configuración del proveedor no es válida."
     : chatSettingsAreDirty
-      ? "Guarda o vuelve a probar la configuración antes de enviar mensajes."
+      ? "Guarda la configuración actual antes de enviar mensajes."
       : !chatModelIsConfigured
-        ? "Define un modelo para esta sesión antes de habilitar el chat."
-        : chatConnectionError
-          ? "La última prueba de conexión falló. Corrige el modelo, la URL o el backend y vuelve a probar."
-          : !chatConnectionVerifiedAt
-            ? "Prueba la conexión de esta configuración antes de usar el chat."
-            : "Enter envía. Shift+Enter agrega una nueva línea.";
+        ? chatUsesOpenAiCompatibleTransport
+          ? "Define un modelo para esta sesión antes de habilitar el chat."
+          : "Define un identificador para la integración antes de habilitar el chat."
+        : chatUsesOpenAiCompatibleTransport
+          ? chatConnectionError
+            ? "La última prueba de conexión falló. Corrige el modelo, la URL o el backend y vuelve a probar."
+            : !chatConnectionVerifiedAt
+              ? "Prueba la conexión de esta configuración antes de usar el chat."
+              : "Enter envía. Shift+Enter agrega una nueva línea."
+          : "Enter envía. Shift+Enter agrega una nueva línea.";
 
   function clearSelection() {
     setAnchorIndex(null);
@@ -688,6 +782,10 @@ export function SessionSelection({
   }
 
   function handleLoadSavedConfiguration() {
+    if (!canUseSavedLlmConfigurations) {
+      return;
+    }
+
     if (!selectedLlmConfigurationId) {
       return;
     }
@@ -706,6 +804,7 @@ export function SessionSelection({
       return;
     }
 
+    setChatTransportDraft("openai_compatible");
     setChatModelDraft(selectedConfiguration.chatModel);
     setChatBaseUrlDraft(selectedConfiguration.chatBaseUrl);
     setChatApiKeyDraft(selectedConfiguration.chatApiKey);
@@ -726,6 +825,16 @@ export function SessionSelection({
 
   async function handleSaveCurrentConfiguration() {
     const trimmedName = newLlmConfigurationName.trim();
+
+    if (!canUseSavedLlmConfigurations) {
+      pushToast({
+        title: "Solo disponible para OpenAI-compatible",
+        description: "Las configuraciones globales LLM siguen reservadas para el transporte síncrono.",
+        variant: "error",
+        durationMs: 7000,
+      });
+      return;
+    }
 
     if (!trimmedName || isSavingLlmConfiguration) {
       return;
@@ -805,7 +914,25 @@ export function SessionSelection({
         return;
       }
 
+      if (result.transport === "webhook_async" && "userMessage" in result) {
+        setPendingUserMessage(null);
+        setLocalMessages((currentMessages) => [...currentMessages, result.userMessage]);
+        setLocalChatRequest(result.chatRequest);
+        pushToast({
+          title: "Mensaje enviado",
+          description: "La integración aceptó el mensaje. Estamos esperando la respuesta final.",
+          variant: "success",
+          durationMs: 5000,
+        });
+        textareaRef.current?.focus();
+        startTransition(() => {
+          router.refresh();
+        });
+        return;
+      }
+
       setPendingUserMessage(null);
+      setLocalChatRequest(null);
       pushToast({
         title: "Mensaje enviado",
         description: "La conversación se actualizó correctamente.",
@@ -840,6 +967,7 @@ export function SessionSelection({
 
     try {
       const result = await updateSessionChatModel(projectId, sessionId, {
+        chatTransport: chatTransportDraft,
         chatModel: chatModelDraft,
         chatBaseUrl: chatBaseUrlDraft,
         chatApiKey: chatApiKeyDraft,
@@ -862,8 +990,10 @@ export function SessionSelection({
             : "Configuración eliminada",
         description:
           chatModelDraft.trim() || chatBaseUrlDraft.trim() || chatApiKeyDraft.trim()
-            ? "La sesión guardó el modelo, la URL y la API key, y dejó pendiente una nueva verificación de conexión."
-            : "La sesión quedó sin modelo, URL ni API key personalizados.",
+            ? chatTransportDraft === "openai_compatible"
+              ? "La sesión guardó el modelo, la URL y la API key, y dejó pendiente una nueva verificación de conexión."
+              : "La sesión guardó la integración webhook, su endpoint y el bearer opcional."
+            : "La sesión quedó sin configuración personalizada.",
         variant: "success",
         durationMs: 5000,
       });
@@ -884,6 +1014,16 @@ export function SessionSelection({
   }
 
   async function handleVerifyConnection() {
+    if (chatTransportDraft !== "openai_compatible") {
+      pushToast({
+        title: "Verificación no requerida",
+        description: "El modo webhook_async no necesita prueba manual de conexión.",
+        variant: "success",
+        durationMs: 5000,
+      });
+      return;
+    }
+
     if (isTestingConnection) {
       return;
     }
@@ -892,6 +1032,7 @@ export function SessionSelection({
 
     try {
       const result = await verifySessionChatConnection(projectId, sessionId, {
+        chatTransport: chatTransportDraft,
         chatModel: chatModelDraft,
         chatBaseUrl: chatBaseUrlDraft,
         chatApiKey: chatApiKeyDraft,
@@ -1111,17 +1252,23 @@ export function SessionSelection({
     }
   }
 
-  const connectionSummary = chatEnabled
-    ? "Listo para conversar"
-    : chatConnectionError
-      ? "Revisar conexión"
-      : !chatModelIsConfigured
-        ? "Configuración pendiente"
-        : !chatConnectionVerifiedAt
-          ? "Prueba pendiente"
-          : chatSettingsAreDirty
-            ? "Cambios sin guardar"
-            : "Chat pausado";
+  const connectionSummary = pendingAsyncChatRequest
+    ? "Esperando callback"
+    : failedAsyncChatRequest
+      ? "Última entrega fallida"
+      : chatEnabled
+        ? chatTransport === "webhook_async"
+          ? "Webhook listo"
+          : "Listo para conversar"
+        : chatConnectionError
+          ? "Revisar conexión"
+          : !chatModelIsConfigured
+            ? "Configuración pendiente"
+            : chatUsesOpenAiCompatibleTransport && !chatConnectionVerifiedAt
+              ? "Prueba pendiente"
+              : chatSettingsAreDirty
+                ? "Cambios sin guardar"
+                : "Chat pausado";
   const sessionDisplayTitle = sessionTitle.trim() || "Sesión en curso";
   const hasSelection = selectionRange !== null;
   const turnCount = localMessages.length;
@@ -1365,6 +1512,7 @@ export function SessionSelection({
                       isSending ||
                       isSavingEdit ||
                       retryingMessageId !== null ||
+                      pendingAsyncChatRequest !== null ||
                       message.id === "__pending-user-message__";
                     const showRetryButton =
                       message.id !== "__pending-user-message__" &&
@@ -1585,6 +1733,66 @@ export function SessionSelection({
                     );
                   })}
 
+                  {pendingAsyncChatRequest ? (
+                    <div className="flex w-full justify-start">
+                      <div className="w-full max-w-[41rem]">
+                        <div className="mb-3 flex items-center gap-3 px-2">
+                          <span className="inline-flex size-9 items-center justify-center rounded-full bg-[rgba(15,95,92,0.12)] text-[var(--accent)]">
+                            <SparklesIcon />
+                          </span>
+                          <div className="min-w-0">
+                            <p className="text-[0.7rem] font-semibold uppercase tracking-[0.24em] text-[var(--muted-strong)]">
+                              Asistente
+                            </p>
+                            <p className="mt-1 text-[0.68rem] uppercase tracking-[0.22em] text-[var(--muted)]">
+                              Procesando webhook
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="rounded-[2rem] border border-[rgba(24,35,47,0.06)] bg-[rgba(255,252,246,0.92)] px-5 py-5 shadow-[0_18px_46px_rgba(24,35,47,0.06)] sm:px-6 sm:py-6">
+                          <div className="typing-indicator" aria-label="Integración procesando respuesta" role="status">
+                            <span className="typing-dot" />
+                            <span className="typing-dot" />
+                            <span className="typing-dot" />
+                          </div>
+                          <p className="mt-4 text-sm leading-7 text-[var(--muted)]">
+                            La integración aceptó el mensaje y responderá por callback en cuanto termine de procesarlo.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {failedAsyncChatRequest ? (
+                    <div className="flex w-full justify-start">
+                      <div className="w-full max-w-[41rem]">
+                        <div className="mb-3 flex items-center gap-3 px-2">
+                          <span className="inline-flex size-9 items-center justify-center rounded-full bg-rose-100 text-rose-700">
+                            <SparklesIcon />
+                          </span>
+                          <div className="min-w-0">
+                            <p className="text-[0.7rem] font-semibold uppercase tracking-[0.24em] text-rose-700">
+                              Asistente
+                            </p>
+                            <p className="mt-1 text-[0.68rem] uppercase tracking-[0.22em] text-rose-500">
+                              Entrega fallida
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="rounded-[2rem] border border-rose-200 bg-rose-50 px-5 py-5 shadow-[0_18px_46px_rgba(24,35,47,0.06)] sm:px-6 sm:py-6">
+                          <p className="text-sm font-semibold uppercase tracking-[0.22em] text-rose-700">
+                            La integración no pudo completar la respuesta
+                          </p>
+                          <p className="mt-3 whitespace-pre-wrap text-[1rem] leading-7 text-rose-900">
+                            {failedAsyncChatRequest.errorMessage || "No fue posible completar la respuesta del asistente."}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+
                   {isSending || retryingMessageId !== null ? (
                     <div className="flex w-full justify-start">
                       <div className="w-full max-w-[41rem]">
@@ -1597,7 +1805,11 @@ export function SessionSelection({
                               Asistente
                             </p>
                             <p className="mt-1 text-[0.68rem] uppercase tracking-[0.22em] text-[var(--muted)]">
-                              {retryingMessageId !== null ? "Reintentando" : "Escribiendo"}
+                              {retryingMessageId !== null
+                                ? "Reintentando"
+                                : chatTransport === "webhook_async"
+                                  ? "Enviando al webhook"
+                                  : "Escribiendo"}
                             </p>
                           </div>
                         </div>
@@ -2068,16 +2280,23 @@ export function SessionSelection({
       <CenteredSheet
         open={activePanel === "settings"}
         title="Configuración y test del chat"
-        description="Ajusta el modelo, la URL, la API key, verifica la conexión y define el prompt de comportamiento sin sacar al transcript del foco principal."
+        description="Elige el transporte del chat, ajusta el endpoint o proveedor correspondiente y define el prompt de comportamiento sin sacar al transcript del foco principal."
         onClose={() => setActivePanel(null)}
       >
         <div className="space-y-6">
-          <div className="grid gap-4 lg:grid-cols-4">
+          <div className="grid gap-4 lg:grid-cols-5">
             <InfoCard label="Proveedor" value={chatProviderLabel} />
+            <InfoCard
+              label="Transporte"
+              value={chatTransport === "webhook_async" ? "Webhook async" : "OpenAI-compatible"}
+            />
             <InfoCard label="Modelo guardado" value={chatModel || "Sin definir"} />
             <InfoCard
               label="URL efectiva"
-              value={chatResolvedBaseUrl || "https://api.openai.com/v1"}
+              value={
+                chatResolvedBaseUrl ||
+                (chatTransport === "openai_compatible" ? "https://api.openai.com/v1" : "Sin definir")
+              }
               compact
             />
             <InfoCard
@@ -2087,124 +2306,175 @@ export function SessionSelection({
             />
           </div>
 
-          <div className="grid gap-4 rounded-[1.5rem] border border-[var(--line)] bg-white/50 p-4 lg:grid-cols-[minmax(0,1fr)_auto]">
-            <div className="space-y-3">
-              <label className="block space-y-2">
-                <FormLabel>Usar configuración guardada</FormLabel>
-                <select
-                  className="field"
-                  value={selectedLlmConfigurationId}
-                  onChange={(event) => setSelectedLlmConfigurationId(event.target.value)}
-                  disabled={isSavingModel || isTestingConnection || savedLlmConfigurations.length === 0}
-                >
-                  <option value="">Selecciona una configuración global</option>
-                  {savedLlmConfigurations.map((configuration) => (
-                    <option key={configuration.id} value={configuration.id}>
-                      {configuration.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <p className="text-sm text-[var(--muted)]">
-                La selección carga modelo, URL y API key al borrador actual. Si la configuración trae prompt, también lo
-                aplica.
-              </p>
-            </div>
-            <div className="flex items-end">
-              <button
-                type="button"
-                className="button-secondary"
-                onClick={handleLoadSavedConfiguration}
-                disabled={!selectedLlmConfigurationId || isSavingModel || isTestingConnection}
-              >
-                Cargar al borrador
-              </button>
-            </div>
-          </div>
+          <label className="block space-y-2">
+            <FormLabel>Transporte del chat</FormLabel>
+            <select
+              className="field"
+              value={chatTransportDraft}
+              onChange={(event) => setChatTransportDraft(event.target.value as ChatTransportValue)}
+              disabled={isSavingModel || isTestingConnection}
+            >
+              <option value="openai_compatible">OpenAI-compatible</option>
+              <option value="webhook_async">Webhook async</option>
+            </select>
+          </label>
 
-          <div className="grid gap-4 rounded-[1.5rem] border border-[var(--line)] bg-white/50 p-4 lg:grid-cols-[minmax(0,1fr)_auto]">
-            <div className="space-y-3">
-              <label className="block space-y-2">
-                <FormLabel>Guardar como nueva configuración</FormLabel>
-                <input
-                  className="field"
-                  value={newLlmConfigurationName}
-                  onChange={(event) => setNewLlmConfigurationName(event.target.value)}
-                  placeholder="Ejemplo: OpenAI equipo clínico"
-                  disabled={isSavingLlmConfiguration}
-                />
-              </label>
-              <p className="text-sm text-[var(--muted)]">
-                Esto guarda el modelo, la URL, la API key y el prompt del borrador actual para reutilizarlos en cualquier
-                proyecto.
-              </p>
+          {canUseSavedLlmConfigurations ? (
+            <>
+              <div className="grid gap-4 rounded-[1.5rem] border border-[var(--line)] bg-white/50 p-4 lg:grid-cols-[minmax(0,1fr)_auto]">
+                <div className="space-y-3">
+                  <label className="block space-y-2">
+                    <FormLabel>Usar configuración guardada</FormLabel>
+                    <select
+                      className="field"
+                      value={selectedLlmConfigurationId}
+                      onChange={(event) => setSelectedLlmConfigurationId(event.target.value)}
+                      disabled={isSavingModel || isTestingConnection || savedLlmConfigurations.length === 0}
+                    >
+                      <option value="">Selecciona una configuración global</option>
+                      {savedLlmConfigurations.map((configuration) => (
+                        <option key={configuration.id} value={configuration.id}>
+                          {configuration.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <p className="text-sm text-[var(--muted)]">
+                    La selección carga modelo, URL y API key al borrador actual. Si la configuración trae prompt, también lo
+                    aplica.
+                  </p>
+                </div>
+                <div className="flex items-end">
+                  <button
+                    type="button"
+                    className="button-secondary"
+                    onClick={handleLoadSavedConfiguration}
+                    disabled={!selectedLlmConfigurationId || isSavingModel || isTestingConnection}
+                  >
+                    Cargar al borrador
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid gap-4 rounded-[1.5rem] border border-[var(--line)] bg-white/50 p-4 lg:grid-cols-[minmax(0,1fr)_auto]">
+                <div className="space-y-3">
+                  <label className="block space-y-2">
+                    <FormLabel>Guardar como nueva configuración</FormLabel>
+                    <input
+                      className="field"
+                      value={newLlmConfigurationName}
+                      onChange={(event) => setNewLlmConfigurationName(event.target.value)}
+                      placeholder="Ejemplo: OpenAI equipo clínico"
+                      disabled={isSavingLlmConfiguration}
+                    />
+                  </label>
+                  <p className="text-sm text-[var(--muted)]">
+                    Esto guarda el modelo, la URL, la API key y el prompt del borrador actual para reutilizarlos en cualquier
+                    proyecto.
+                  </p>
+                </div>
+                <div className="flex items-end">
+                  <button
+                    type="button"
+                    className="button-secondary"
+                    onClick={() => {
+                      void handleSaveCurrentConfiguration();
+                    }}
+                    disabled={
+                      isSavingLlmConfiguration ||
+                      newLlmConfigurationName.trim().length === 0 ||
+                      chatModelDraft.trim().length === 0
+                    }
+                  >
+                    {isSavingLlmConfiguration ? "Guardando..." : "Guardar como nueva"}
+                  </button>
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="rounded-[1.5rem] border border-[var(--line)] bg-white/50 p-4 text-sm leading-7 text-[var(--muted)]">
+              El modo
+              {" "}
+              <span className="font-semibold text-[var(--foreground)]">webhook_async</span>
+              {" "}
+              no usa configuraciones globales LLM porque su contrato y autenticación viven a nivel de sesión.
             </div>
-            <div className="flex items-end">
-              <button
-                type="button"
-                className="button-secondary"
-                onClick={() => {
-                  void handleSaveCurrentConfiguration();
-                }}
-                disabled={
-                  isSavingLlmConfiguration ||
-                  newLlmConfigurationName.trim().length === 0 ||
-                  chatModelDraft.trim().length === 0
-                }
-              >
-                {isSavingLlmConfiguration ? "Guardando..." : "Guardar como nueva"}
-              </button>
-            </div>
-          </div>
+          )}
 
           <label className="block space-y-2">
-            <FormLabel>Chat model</FormLabel>
+            <FormLabel>
+              {chatTransportDraft === "openai_compatible" ? "Chat model" : "Identificador de integración"}
+            </FormLabel>
             <input
               className="field"
               value={chatModelDraft}
               onChange={(event) => setChatModelDraft(event.target.value)}
-              placeholder="Ejemplo: gpt-5-mini o el identificador expuesto por tu backend"
+              placeholder={
+                chatTransportDraft === "openai_compatible"
+                  ? "Ejemplo: gpt-5-mini"
+                  : "Ejemplo: soporte-interno-webhook"
+              }
               disabled={isSavingModel || isTestingConnection}
             />
           </label>
 
           <label className="block space-y-2">
-            <FormLabel>Chat URL (optional)</FormLabel>
+            <FormLabel>
+              {chatTransportDraft === "openai_compatible" ? "Chat URL (optional)" : "Webhook URL"}
+            </FormLabel>
             <input
               className="field mono"
               value={chatBaseUrlDraft}
               onChange={(event) => setChatBaseUrlDraft(event.target.value)}
-              placeholder="Ejemplo: http://localhost:1234/v1"
+              placeholder={
+                chatTransportDraft === "openai_compatible"
+                  ? "Ejemplo: http://localhost:1234/v1"
+                  : "Ejemplo: https://integracion.tudominio.com/chat/webhook"
+              }
               disabled={isSavingModel || isTestingConnection}
             />
             <p className="text-sm text-[var(--muted)]">
-              Si la dejas vacía, la sesión usa la URL por defecto del entorno.
+              {chatTransportDraft === "openai_compatible"
+                ? "Si la dejas vacía, la sesión usa la URL por defecto del entorno."
+                : "Debe ser la URL completa que recibe el POST inicial y luego responderá por callback a esta app."}
             </p>
           </label>
 
           <label className="block space-y-2">
-            <FormLabel>Chat API key (optional)</FormLabel>
+            <FormLabel>
+              {chatTransportDraft === "openai_compatible" ? "Chat API key (optional)" : "Bearer token (optional)"}
+            </FormLabel>
             <input
               type="password"
               className="field mono"
               value={chatApiKeyDraft}
               onChange={(event) => setChatApiKeyDraft(event.target.value)}
-              placeholder="Bearer token opcional para este backend"
+              placeholder={
+                chatTransportDraft === "openai_compatible"
+                  ? "Bearer token opcional para este backend"
+                  : "Bearer token opcional para llamar al webhook"
+              }
               disabled={isSavingModel || isTestingConnection}
             />
             <p className="text-sm text-[var(--muted)]">
-              Si la dejas vacía, no se envía API key de sesión y se usa solo la del entorno si existe.
+              {chatTransportDraft === "openai_compatible"
+                ? "Si la dejas vacía, no se envía API key de sesión y se usa solo la del entorno si existe."
+                : "Si la dejas vacía, la app invoca el webhook sin cabecera Authorization."}
             </p>
           </label>
 
           <div className="flex flex-wrap items-center justify-between gap-4 rounded-[1.5rem] border border-[var(--line)] bg-white/60 p-4">
             <div className="text-sm text-[var(--muted)]">
-              {chatConnectionVerifiedAt ? (
-                <p>Conexión verificada: {formatDate(chatConnectionVerifiedAt)}</p>
-              ) : chatConnectionCheckedAt ? (
-                <p>Última prueba: {formatDate(chatConnectionCheckedAt)}</p>
+              {chatTransportDraft === "openai_compatible" ? (
+                chatConnectionVerifiedAt ? (
+                  <p>Conexión verificada: {formatDate(chatConnectionVerifiedAt)}</p>
+                ) : chatConnectionCheckedAt ? (
+                  <p>Última prueba: {formatDate(chatConnectionCheckedAt)}</p>
+                ) : (
+                  <p>Esta sesión todavía no verificó la conexión del chat.</p>
+                )
               ) : (
-                <p>Esta sesión todavía no verificó la conexión del chat.</p>
+                <p>El modo webhook_async no exige una prueba manual. Solo necesita URL válida, APP_BASE_URL y el secret del callback.</p>
               )}
               {chatConnectionError ? (
                 <p className="mt-1 text-rose-700">{chatConnectionError}</p>
@@ -2231,10 +2501,15 @@ export function SessionSelection({
                 disabled={
                   isSavingModel ||
                   isTestingConnection ||
-                  chatModelDraft.trim().length === 0
+                  chatModelDraft.trim().length === 0 ||
+                  chatTransportDraft !== "openai_compatible"
                 }
               >
-                {isTestingConnection ? "Probando..." : "Probar conexión"}
+                {chatTransportDraft === "openai_compatible"
+                  ? isTestingConnection
+                    ? "Probando..."
+                    : "Probar conexión"
+                  : "No aplica"}
               </button>
             </div>
           </div>
@@ -2248,7 +2523,9 @@ export function SessionSelection({
             )}
           >
             {chatEnabled
-              ? "El chat está habilitado para esta configuración verificada."
+              ? chatTransportDraft === "openai_compatible"
+                ? "El chat está habilitado para esta configuración verificada."
+                : "El chat está habilitado para esta configuración webhook."
               : chatAvailabilityMessage}
           </div>
 
