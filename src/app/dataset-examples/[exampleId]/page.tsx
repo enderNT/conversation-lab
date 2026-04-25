@@ -1,10 +1,18 @@
 import { notFound } from "next/navigation";
 import { DatasetExampleEditor } from "@/components/dataset-example-editor";
-import { datasetSpecFromPrisma, parseValidationState, sourceSliceFromPrisma } from "@/lib/datasets";
+import {
+  DATASET_IMPORT_SESSION_TITLE,
+  datasetSpecFromPrisma,
+  parseValidationState,
+  sourceSliceFromPrisma,
+} from "@/lib/datasets";
 import { ensureDefaultDatasetSpecs } from "@/lib/dataset-specs";
 import { prisma } from "@/lib/prisma";
 import type { JsonObject, JsonValue } from "@/lib/types";
-import { updateDatasetExampleWithFeedback } from "@/app/actions";
+import {
+  reassignDatasetExampleSessionWithFeedback,
+  updateDatasetExampleWithFeedback,
+} from "@/app/actions";
 
 export const dynamic = "force-dynamic";
 
@@ -57,7 +65,35 @@ export default async function DatasetExampleDetailPage({
     notFound();
   }
 
+  const [projectSessions, linkedExampleCount] = await Promise.all([
+    prisma.session.findMany({
+      where: {
+        projectId: datasetExample.sourceSlice.projectId,
+      },
+      orderBy: [{ createdAt: "desc" }],
+      select: {
+        id: true,
+        title: true,
+      },
+    }),
+    prisma.datasetExample.count({
+      where: {
+        sourceSliceId: datasetExample.sourceSliceId,
+      },
+    }),
+  ]);
+
   const sourceSlice = sourceSliceFromPrisma(datasetExample.sourceSlice);
+  const provenance =
+    typeof datasetExample.provenanceJson === "object" &&
+    datasetExample.provenanceJson !== null &&
+    !Array.isArray(datasetExample.provenanceJson)
+      ? (datasetExample.provenanceJson as Record<string, JsonValue>)
+      : {};
+  const isDatasetSpecLocked = provenance.import_mode === "jsonl_file";
+  const currentSessionTitle =
+    projectSessions.find((session) => session.id === sourceSlice.sessionId)?.title ||
+    "Sesión sin título";
 
   return (
     <DatasetExampleEditor
@@ -67,6 +103,14 @@ export default async function DatasetExampleDetailPage({
       backLabel="Volver a dataset examples"
       sourceSlice={sourceSlice}
       datasetSpecs={datasetSpecs.map(datasetSpecFromPrisma)}
+      projectSessions={projectSessions.map((session) => ({
+        id: session.id,
+        title: session.title || "Sesión sin título",
+      }))}
+      currentSessionId={sourceSlice.sessionId}
+      currentSessionTitle={currentSessionTitle}
+      isCurrentSessionFallback={currentSessionTitle === DATASET_IMPORT_SESSION_TITLE}
+      isDatasetSpecLocked={isDatasetSpecLocked}
       llmConfigurations={llmConfigurations.map((configuration) => ({
         id: configuration.id,
         name: configuration.name,
@@ -110,8 +154,10 @@ export default async function DatasetExampleDetailPage({
         version: datasetExample.version,
         sourceSliceId: datasetExample.sourceSliceId,
         fieldMappingCount: datasetExample.fieldMappings.length,
+        linkedExampleCount,
       }}
       action={updateDatasetExampleWithFeedback.bind(null, datasetExample.id)}
+      sessionLinkAction={reassignDatasetExampleSessionWithFeedback.bind(null, datasetExample.id)}
     />
   );
 }

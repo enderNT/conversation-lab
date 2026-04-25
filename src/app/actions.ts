@@ -36,6 +36,8 @@ import {
   normalizeDatasetLlmContextSelection,
 } from "@/lib/dataset-llm";
 import {
+  DATASET_IMPORT_SESSION_TITLE,
+  buildImportedSourceSliceTitle,
   buildImportedDatasetMappings,
   buildImportedSourceSliceMetadataJson,
   buildImportedSourceSliceRecord,
@@ -275,6 +277,11 @@ const datasetExampleSchema = z.object({
 
 const datasetImportSchema = z.object({
   datasetSpecId: z.string().trim().min(1, "Selecciona un dataset spec para importar el archivo."),
+  sessionId: z.string().trim().optional(),
+});
+
+const datasetExampleSessionLinkSchema = z.object({
+  sessionId: z.string().trim().optional(),
 });
 
 const datasetFieldGenerationSchema = z.object({
@@ -354,7 +361,6 @@ function buildActionRefreshSuccessState(message: string): ActionFormState {
   };
 }
 
-const DATASET_IMPORT_SESSION_TITLE = "Dataset Imports";
 const DATASET_SPEC_IMPORT_UPDATED_BY = "import";
 
 function buildDatasetImportState(input: {
@@ -474,7 +480,7 @@ function buildDatasetImportOutcomeMessage(summary: DatasetImportSummary) {
   return "No se pudo importar ninguna fila válida del archivo.";
 }
 
-async function findOrCreateDatasetImportSession(projectId: string) {
+async function findOrCreateDatasetFallbackSession(projectId: string) {
   const existingSession = await prisma.session.findFirst({
     where: {
       projectId,
@@ -504,6 +510,62 @@ async function findOrCreateDatasetImportSession(projectId: string) {
   });
 
   return createdSession.id;
+}
+
+async function resolveDatasetTargetSessionId(projectId: string, sessionId?: string) {
+  const normalizedSessionId = sessionId?.trim() ?? "";
+
+  if (!normalizedSessionId) {
+    return findOrCreateDatasetFallbackSession(projectId);
+  }
+
+  const session = await prisma.session.findUnique({
+    where: { id: normalizedSessionId },
+    select: {
+      id: true,
+      projectId: true,
+    },
+  });
+
+  if (!session || session.projectId !== projectId) {
+    throw new Error("La sesión seleccionada no existe o no pertenece a este proyecto.");
+  }
+
+  return session.id;
+}
+
+function asJsonObjectRecord(value: Prisma.JsonValue | null | undefined) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return {} as Record<string, JsonValue>;
+  }
+
+  return { ...(value as Record<string, JsonValue>) };
+}
+
+function isImportedDatasetExampleProvenance(value: Prisma.JsonValue | null | undefined) {
+  const record = asJsonObjectRecord(value);
+
+  return record.import_mode === "jsonl_file";
+}
+
+function updateSourceMetadataSessionId(
+  value: Prisma.JsonValue | null | undefined,
+  sessionId: string,
+) {
+  return {
+    ...asJsonObjectRecord(value),
+    session_id: sessionId,
+  } as Prisma.InputJsonValue;
+}
+
+function updateDatasetExampleProvenanceSessionId(
+  value: Prisma.JsonValue | null | undefined,
+  sessionId: string,
+) {
+  return {
+    ...asJsonObjectRecord(value),
+    source_session_id: sessionId,
+  } as Prisma.InputJsonValue;
 }
 
 function buildDatasetFieldRagQuery(promptText: string) {
@@ -4714,6 +4776,7 @@ export async function importDatasetExamplesWithFeedback(
 ): Promise<DatasetImportActionState> {
   const parsed = datasetImportSchema.safeParse({
     datasetSpecId: asOptionalString(formData.get("datasetSpecId")),
+    sessionId: asOptionalString(formData.get("sessionId")),
   });
 
   if (!parsed.success) {
@@ -4825,6 +4888,19 @@ export async function importDatasetExamplesWithFeedback(
   let rejectedCount = 0;
   let datasetImportSessionId: string | null = null;
 
+  try {
+    datasetImportSessionId = await resolveDatasetTargetSessionId(
+      projectId,
+      parsed.data.sessionId,
+    );
+  } catch (error) {
+    return buildDatasetImportState({
+      status: "error",
+      message: getActionErrorMessage(error, "No fue posible resolver la sesión de importación."),
+      summary: null,
+    });
+  }
+
   for (const parsedRow of parsedRows) {
     if (!parsedRow.row) {
       rejectedCount += 1;
@@ -4874,13 +4950,13 @@ export async function importDatasetExamplesWithFeedback(
     const importedAt = new Date().toISOString();
     const sourceSliceDraft = buildImportedSourceSliceRecord({
       projectId,
-      sessionId: datasetImportSessionId ?? "",
+      sessionId: datasetImportSessionId,
       fileName,
       lineNumber: parsedRow.lineNumber,
     });
     const sourceMetadataJson = buildImportedSourceSliceMetadataJson({
       projectId,
-      sessionId: datasetImportSessionId ?? "",
+      sessionId: datasetImportSessionId,
       fileName,
       lineNumber: parsedRow.lineNumber,
       importedAt,
@@ -4894,9 +4970,6 @@ export async function importDatasetExamplesWithFeedback(
     });
 
     try {
-      if (!datasetImportSessionId) {
-        datasetImportSessionId = await findOrCreateDatasetImportSession(projectId);
-      }
       const importSessionId = datasetImportSessionId;
 
       if (!importSessionId) {
@@ -4925,13 +4998,20 @@ export async function importDatasetExamplesWithFeedback(
           data: {
             projectId,
             sessionId: importSessionId,
-            title: hydratedSourceSlice.title,
+            title: null,
             conversationSliceJson: [] as Prisma.InputJsonValue,
             surroundingContextJson: [] as Prisma.InputJsonValue,
             selectedTurnIdsJson: [] as Prisma.InputJsonValue,
             lastUserMessage: hydratedSourceSlice.lastUserMessage,
             sourceSummary: hydratedSourceSlice.sourceSummary,
             sourceMetadataJson: hydratedSourceMetadataJson as Prisma.InputJsonValue,
+          },
+        });
+
+        await tx.sourceSlice.update({
+          where: { id: sourceSlice.id },
+          data: {
+            title: buildImportedSourceSliceTitle(sourceSlice.id),
           },
         });
 
@@ -5015,6 +5095,115 @@ export async function importDatasetExamplesWithFeedback(
     message: buildDatasetImportOutcomeMessage(summary),
     summary,
   });
+}
+
+export async function reassignDatasetExampleSessionWithFeedback(
+  datasetExampleId: string,
+  _previousState: ActionFormState,
+  formData: FormData,
+) {
+  const parsed = datasetExampleSessionLinkSchema.safeParse({
+    sessionId: asOptionalString(formData.get("sessionId")),
+  });
+
+  if (!parsed.success) {
+    return buildActionErrorState(
+      getActionErrorMessage(parsed.error, "No fue posible actualizar el vínculo de chat."),
+    );
+  }
+
+  const shouldUnlink = formData.get("unlink") === "1";
+
+  let datasetExample;
+  let linkedExamples: Array<{
+    id: string;
+    provenanceJson: Prisma.JsonValue;
+  }> = [];
+  let targetSessionId = "";
+
+  try {
+    datasetExample = await prisma.datasetExample.findUnique({
+      where: { id: datasetExampleId },
+      include: {
+        sourceSlice: true,
+      },
+    });
+
+    if (!datasetExample) {
+      return buildActionErrorState("El dataset example ya no existe.");
+    }
+
+    linkedExamples = await prisma.datasetExample.findMany({
+      where: {
+        sourceSliceId: datasetExample.sourceSliceId,
+      },
+      select: {
+        id: true,
+        provenanceJson: true,
+      },
+    });
+
+    targetSessionId = await resolveDatasetTargetSessionId(
+      datasetExample.sourceSlice.projectId,
+      shouldUnlink ? undefined : parsed.data.sessionId,
+    );
+
+    if (targetSessionId === datasetExample.sourceSlice.sessionId) {
+      return buildActionRefreshSuccessState("El vínculo de chat ya estaba actualizado.");
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.sourceSlice.update({
+        where: { id: datasetExample!.sourceSliceId },
+        data: {
+          sessionId: targetSessionId,
+          sourceMetadataJson: updateSourceMetadataSessionId(
+            datasetExample!.sourceSlice.sourceMetadataJson,
+            targetSessionId,
+          ),
+        },
+      });
+
+      for (const linkedExample of linkedExamples) {
+        await tx.datasetExample.update({
+          where: { id: linkedExample.id },
+          data: {
+            provenanceJson: updateDatasetExampleProvenanceSessionId(
+              linkedExample.provenanceJson,
+              targetSessionId,
+            ),
+            updatedBy: "human",
+          },
+        });
+      }
+    });
+  } catch (error) {
+    return buildActionErrorState(
+      getActionErrorMessage(error, "No fue posible actualizar el vínculo de chat."),
+    );
+  }
+
+  revalidateDatasetPaths(
+    datasetExample.sourceSlice.projectId,
+    datasetExample.sourceSlice.sessionId,
+    datasetExampleId,
+  );
+  revalidatePath(`/projects/${datasetExample.sourceSlice.projectId}/dataset-import`);
+
+  if (targetSessionId !== datasetExample.sourceSlice.sessionId) {
+    revalidatePath(`/projects/${datasetExample.sourceSlice.projectId}/sessions/${targetSessionId}`);
+    revalidatePath(
+      `/projects/${datasetExample.sourceSlice.projectId}/sessions/${targetSessionId}/dataset/new`,
+    );
+  }
+
+  if (!shouldUnlink && parsed.data.sessionId?.trim()) {
+    return buildActionRefreshSuccessState("Vínculo de chat actualizado correctamente.");
+  }
+
+  return buildActionRefreshSuccessState(
+    `Dataset example movido a ${DATASET_IMPORT_SESSION_TITLE}.`,
+  );
 }
 
 export async function createDatasetExample(
@@ -5408,8 +5597,14 @@ export async function updateDatasetExample(datasetExampleId: string, formData: F
     throw new Error("El dataset example no existe.");
   }
 
+  const requestedDatasetSpecId = isImportedDatasetExampleProvenance(
+    datasetExample.provenanceJson,
+  )
+    ? datasetExample.datasetSpecId
+    : parsed.datasetSpecId;
+
   const datasetSpec = await prisma.datasetSpec.findUnique({
-    where: { id: parsed.datasetSpecId },
+    where: { id: requestedDatasetSpecId },
   });
 
   if (!datasetSpec) {
@@ -5516,17 +5711,22 @@ export async function updateDatasetExampleWithFeedback(
   let mappings;
 
   try {
-    [datasetExample, datasetSpec] = await Promise.all([
-      prisma.datasetExample.findUnique({
-        where: { id: datasetExampleId },
-        include: {
-          sourceSlice: true,
-        },
-      }),
-      prisma.datasetSpec.findUnique({
-        where: { id: parsed.data.datasetSpecId },
-      }),
-    ]);
+    datasetExample = await prisma.datasetExample.findUnique({
+      where: { id: datasetExampleId },
+      include: {
+        sourceSlice: true,
+      },
+    });
+
+    const requestedDatasetSpecId =
+      datasetExample &&
+      isImportedDatasetExampleProvenance(datasetExample.provenanceJson)
+        ? datasetExample.datasetSpecId
+        : parsed.data.datasetSpecId;
+
+    datasetSpec = await prisma.datasetSpec.findUnique({
+      where: { id: requestedDatasetSpecId },
+    });
 
     inputPayload = parseDatasetJsonObject(parsed.data.inputPayloadJson, "Input payload");
     outputPayload = parseDatasetJsonObject(parsed.data.outputPayloadJson, "Output payload");

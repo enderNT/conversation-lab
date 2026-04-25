@@ -19,6 +19,8 @@ import type {
 } from "@/lib/types";
 import { DATASET_SCHEMA_FIELD_TYPES } from "@/lib/types";
 
+export const DATASET_IMPORT_SESSION_TITLE = "Dataset Imports";
+
 type MessageInput = {
   id: string;
   role: ConversationSliceItem["role"];
@@ -202,6 +204,10 @@ export function canonicalizeJsonValue(value: JsonValue): string {
   return JSON.stringify(normalize(value));
 }
 
+export function buildImportedSourceSliceTitle(sourceSliceId: string) {
+  return sourceSliceId.slice(0, 8);
+}
+
 export function buildImportedSourceSliceRecord(input: {
   projectId: string;
   sessionId: string;
@@ -211,7 +217,7 @@ export function buildImportedSourceSliceRecord(input: {
   return {
     projectId: input.projectId,
     sessionId: input.sessionId,
-    title: `${input.fileName} · row ${input.lineNumber}`,
+    title: "",
     conversationSlice: [],
     surroundingContext: [],
     selectedTurnIds: [],

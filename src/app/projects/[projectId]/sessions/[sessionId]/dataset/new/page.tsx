@@ -184,6 +184,16 @@ export default async function NewDatasetExamplePage({
       backLabel="Volver al chat"
       sourceSlice={sourceSliceDraft}
       datasetSpecs={datasetSpecs.map(datasetSpecFromPrisma)}
+      projectSessions={[
+        {
+          id: session.id,
+          title: session.title || "Sesión sin título",
+        },
+      ]}
+      currentSessionId={session.id}
+      currentSessionTitle={session.title || "Sesión sin título"}
+      isCurrentSessionFallback={false}
+      isDatasetSpecLocked={false}
       llmConfigurations={llmConfigurations.map((configuration) => ({
         id: configuration.id,
         name: configuration.name,

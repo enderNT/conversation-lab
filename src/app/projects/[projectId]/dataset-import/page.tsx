@@ -24,7 +24,7 @@ export default async function ProjectDatasetImportPage({
 
   await ensureDefaultDatasetSpecs();
 
-  const [project, datasetSpecs] = await Promise.all([
+  const [project, datasetSpecs, projectSessions] = await Promise.all([
     prisma.project.findUnique({
       where: { id: projectId },
       select: {
@@ -41,6 +41,14 @@ export default async function ProjectDatasetImportPage({
         name: true,
         slug: true,
         version: true,
+      },
+    }),
+    prisma.session.findMany({
+      where: { projectId },
+      orderBy: [{ createdAt: "desc" }],
+      select: {
+        id: true,
+        title: true,
       },
     }),
   ]);
@@ -89,6 +97,10 @@ export default async function ProjectDatasetImportPage({
             name: datasetSpec.name,
             slug: datasetSpec.slug,
             version: datasetSpec.version,
+          }))}
+          projectSessions={projectSessions.map((session) => ({
+            id: session.id,
+            title: session.title || "Sesión sin título",
           }))}
         />
       )}

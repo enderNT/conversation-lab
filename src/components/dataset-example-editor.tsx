@@ -65,6 +65,11 @@ type GlobalRagConfigurationOption = {
   updatedAt: string;
 };
 
+type ProjectSessionOption = {
+  id: string;
+  title: string;
+};
+
 type StoredMapping = {
   side: "input" | "output";
   fieldKey: string;
@@ -90,6 +95,7 @@ type DatasetEditorMetadata = {
   version: number;
   sourceSliceId: string;
   fieldMappingCount: number;
+  linkedExampleCount: number;
 };
 
 type DatasetFieldStep = {
@@ -302,6 +308,11 @@ export function DatasetExampleEditor(props: {
   backLabel: string;
   sourceSlice: SourceSliceRecord;
   datasetSpecs: DatasetSpecOption[];
+  projectSessions: ProjectSessionOption[];
+  currentSessionId: string;
+  currentSessionTitle: string;
+  isCurrentSessionFallback: boolean;
+  isDatasetSpecLocked: boolean;
   llmConfigurations: GlobalLlmConfigurationOption[];
   ragConfigurations: GlobalRagConfigurationOption[];
   initialDatasetSpecId: string;
@@ -313,13 +324,19 @@ export function DatasetExampleEditor(props: {
   initialValidationState?: DatasetValidationState | null;
   metadata?: DatasetEditorMetadata;
   action: (state: ActionFormState, formData: FormData) => Promise<ActionFormState>;
+  sessionLinkAction?: (state: ActionFormState, formData: FormData) => Promise<ActionFormState>;
 }) {
   const [state, formAction] = useActionState(props.action, EMPTY_ACTION_FORM_STATE);
+  const [sessionLinkState, sessionLinkFormAction] = useActionState(
+    props.sessionLinkAction ?? props.action,
+    EMPTY_ACTION_FORM_STATE,
+  );
   const [datasetSpecId, setDatasetSpecId] = useState(props.initialDatasetSpecId);
   const [title, setTitle] = useState(props.initialTitle);
   const [sourceTitle, setSourceTitle] = useState(props.sourceSlice.title);
   const [sourceSummary, setSourceSummary] = useState(props.sourceSlice.sourceSummary);
   const [reviewStatus, setReviewStatus] = useState(props.initialReviewStatus);
+  const [linkedSessionId, setLinkedSessionId] = useState(props.currentSessionId);
   const [bulkLlmConfigurationId, setBulkLlmConfigurationId] = useState(
     () =>
       props.initialMappings?.find(
@@ -344,6 +361,13 @@ export function DatasetExampleEditor(props: {
   const [previewModalState, setPreviewModalState] = useState<PreviewModalState | null>(null);
   const templateTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const { pushToast } = useToast();
+  const sessionLinkFormId = useMemo(
+    () =>
+      props.datasetExampleId
+        ? `dataset-session-link-form-${props.datasetExampleId}`
+        : "dataset-session-link-form",
+    [props.datasetExampleId],
+  );
 
   useActionFeedbackToast(state, {
     errorTitle:
@@ -352,6 +376,11 @@ export function DatasetExampleEditor(props: {
         : "No fue posible actualizar el dataset example",
     successTitle:
       props.mode === "create" ? "Dataset example guardado" : "Dataset example actualizado",
+  });
+
+  useActionFeedbackToast(sessionLinkState, {
+    errorTitle: "No fue posible actualizar el vínculo de chat",
+    successTitle: "Vínculo de chat actualizado",
   });
 
   const initialSelectedSpec =
@@ -419,6 +448,10 @@ export function DatasetExampleEditor(props: {
     () => JSON.stringify(baseOutputPayload, null, 2),
     [baseOutputPayload],
   );
+
+  useEffect(() => {
+    setLinkedSessionId(props.currentSessionId);
+  }, [props.currentSessionId]);
   const buildTemplateContext = (
     side: "input" | "output",
     field: DatasetSchemaField,
@@ -1718,7 +1751,12 @@ export function DatasetExampleEditor(props: {
   };
 
   return (
-    <form action={formAction} className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
+    <>
+      {props.mode === "edit" && props.sessionLinkAction ? (
+        <form id={sessionLinkFormId} action={sessionLinkFormAction} className="hidden" />
+      ) : null}
+
+      <form action={formAction} className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
       <input type="hidden" name="datasetSpecId" value={selectedSpec?.id ?? ""} />
       <input type="hidden" name="title" value={title} />
       <input type="hidden" name="sourceTitle" value={sourceTitle} />
@@ -1859,39 +1897,50 @@ export function DatasetExampleEditor(props: {
                     </label>
                     <label className="block space-y-2">
                       <FormLabel className="dataset-mapping-control-label">Dataset spec</FormLabel>
-                      <select
-                        className="field"
-                        value={datasetSpecId}
-                        onChange={(event) => {
-                          const nextDatasetSpecId = event.target.value;
-                          const nextSpec =
-                            props.datasetSpecs.find((spec) => spec.id === nextDatasetSpecId) ?? null;
+                      {props.isDatasetSpecLocked ? (
+                        <div className="rounded-[1rem] border border-[var(--line)] bg-[rgba(250,249,246,0.88)] px-3 py-3 text-sm text-[var(--muted-strong)]">
+                          <p className="font-medium text-[var(--foreground)]">
+                            {selectedSpec?.name} ({selectedSpec?.slug})
+                          </p>
+                          <p className="mt-2 leading-6">
+                            Este example fue importado y quedó casado con su dataset spec original.
+                          </p>
+                        </div>
+                      ) : (
+                        <select
+                          className="field"
+                          value={datasetSpecId}
+                          onChange={(event) => {
+                            const nextDatasetSpecId = event.target.value;
+                            const nextSpec =
+                              props.datasetSpecs.find((spec) => spec.id === nextDatasetSpecId) ?? null;
 
-                          setDatasetSpecId(nextDatasetSpecId);
-                          setMappings(
-                            nextSpec
-                              ? nextSpec.id === props.initialDatasetSpecId && props.initialMappings?.length
-                                ? hydrateMappingsFromStored({
-                                    inputSchema: nextSpec.inputSchema,
-                                    outputSchema: nextSpec.outputSchema,
-                                    storedMappings: props.initialMappings,
-                                  })
-                                : [
-                                    ...buildDefaultMappings(nextSpec.inputSchema, "input"),
-                                    ...buildDefaultMappings(nextSpec.outputSchema, "output"),
-                                  ]
-                              : [],
-                          );
-                          setInputManualOverride(false);
-                          setOutputManualOverride(false);
-                        }}
-                      >
-                        {props.datasetSpecs.map((spec) => (
-                          <option key={spec.id} value={spec.id}>
-                            {spec.name} ({spec.slug})
-                          </option>
-                        ))}
-                      </select>
+                            setDatasetSpecId(nextDatasetSpecId);
+                            setMappings(
+                              nextSpec
+                                ? nextSpec.id === props.initialDatasetSpecId && props.initialMappings?.length
+                                  ? hydrateMappingsFromStored({
+                                      inputSchema: nextSpec.inputSchema,
+                                      outputSchema: nextSpec.outputSchema,
+                                      storedMappings: props.initialMappings,
+                                    })
+                                  : [
+                                      ...buildDefaultMappings(nextSpec.inputSchema, "input"),
+                                      ...buildDefaultMappings(nextSpec.outputSchema, "output"),
+                                    ]
+                                : [],
+                            );
+                            setInputManualOverride(false);
+                            setOutputManualOverride(false);
+                          }}
+                        >
+                          {props.datasetSpecs.map((spec) => (
+                            <option key={spec.id} value={spec.id}>
+                              {spec.name} ({spec.slug})
+                            </option>
+                          ))}
+                        </select>
+                      )}
                     </label>
                     <label className="block space-y-2">
                       <FormLabel className="dataset-mapping-control-label">Estado</FormLabel>
@@ -1913,6 +1962,67 @@ export function DatasetExampleEditor(props: {
                     </label>
                   </div>
                 </div>
+
+                {props.mode === "edit" && props.sessionLinkAction ? (
+                  <div className="rounded-[1rem] border border-[var(--line)] bg-white/80 p-4">
+                    <p className="font-[var(--font-label)] text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--muted)]">
+                      Vínculo de chat
+                    </p>
+                    <div className="mt-3 space-y-3">
+                      <div className="rounded-[0.9rem] border border-[var(--line)] bg-[rgba(250,249,246,0.88)] px-3 py-3 text-sm text-[var(--muted-strong)]">
+                        <p className="font-medium text-[var(--foreground)]">
+                          {props.currentSessionTitle}
+                        </p>
+                        <p className="mt-2 leading-6">
+                          {props.isCurrentSessionFallback
+                            ? "Este example vive en la sesión técnica fallback del proyecto."
+                            : "Este example está vinculado a una sesión de chat operativa."}
+                        </p>
+                        {props.metadata && props.metadata.linkedExampleCount > 1 ? (
+                          <p className="mt-2 leading-6">
+                            Este cambio moverá el slice completo y {props.metadata.linkedExampleCount} example(s) vinculados a él.
+                          </p>
+                        ) : null}
+                      </div>
+
+                      <label className="block space-y-2">
+                        <FormLabel className="dataset-mapping-control-label">Cambiar sesión</FormLabel>
+                        <select
+                          name="sessionId"
+                          form={sessionLinkFormId}
+                          className="field"
+                          value={linkedSessionId}
+                          onChange={(event) => setLinkedSessionId(event.target.value)}
+                        >
+                          {props.projectSessions.map((session) => (
+                            <option key={session.id} value={session.id}>
+                              {session.title} ({session.id.slice(0, 8)})
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <button
+                          type="submit"
+                          form={sessionLinkFormId}
+                          className="button-secondary inline-flex w-full items-center justify-center"
+                        >
+                          Guardar vínculo
+                        </button>
+                        <button
+                          type="submit"
+                          form={sessionLinkFormId}
+                          name="unlink"
+                          value="1"
+                          className="button-danger inline-flex w-full items-center justify-center"
+                        >
+                          Desvincular
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
 
                 <div className="rounded-[1rem] border border-[var(--line)] bg-white/80 p-4">
                   <p className="font-[var(--font-label)] text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--muted)]">
@@ -2284,6 +2394,7 @@ export function DatasetExampleEditor(props: {
                       <p>Version: {props.metadata.version}</p>
                       <p>Source slice: {props.metadata.sourceSliceId}</p>
                       <p>Field mappings: {props.metadata.fieldMappingCount}</p>
+                      <p>Chat session: {props.currentSessionTitle}</p>
                     </div>
                   </div>
                 ) : null}
@@ -2340,6 +2451,7 @@ export function DatasetExampleEditor(props: {
           </div>
         </div>
       ) : null}
-    </form>
+      </form>
+    </>
   );
 }

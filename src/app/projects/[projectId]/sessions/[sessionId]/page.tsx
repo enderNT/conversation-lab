@@ -78,6 +78,7 @@ export default async function SessionChatPage({
       include: {
         sourceSlice: {
           select: {
+            title: true,
             lastUserMessage: true,
           },
         },
@@ -166,7 +167,10 @@ export default async function SessionChatPage({
           systemPrompt={session.systemPrompt || ""}
           recentCases={recentDatasetExamples.map((datasetExample) => ({
             id: datasetExample.id,
-            title: datasetExample.title || "Untitled dataset example",
+            title:
+              datasetExample.title ||
+              datasetExample.sourceSlice.title ||
+              "Untitled dataset example",
             status: datasetExample.reviewStatus,
             lastUserMessage: datasetExample.sourceSlice.lastUserMessage,
             updatedAt: datasetExample.updatedAt.toISOString(),

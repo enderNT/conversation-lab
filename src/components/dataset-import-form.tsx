@@ -16,6 +16,11 @@ type DatasetImportSpecOption = {
   version: number;
 };
 
+type DatasetImportSessionOption = {
+  id: string;
+  title: string;
+};
+
 function UploadIcon() {
   return (
     <svg aria-hidden="true" viewBox="0 0 24 24" className="size-5 fill-none stroke-current stroke-[1.9]">
@@ -143,9 +148,11 @@ function ImportSummaryPanel({
 export function DatasetImportForm({
   projectId,
   datasetSpecs,
+  projectSessions,
 }: {
   projectId: string;
   datasetSpecs: DatasetImportSpecOption[];
+  projectSessions: DatasetImportSessionOption[];
 }) {
   const [state, formAction] = useActionState(
     importDatasetExamplesWithFeedback.bind(null, projectId),
@@ -211,11 +218,26 @@ export function DatasetImportForm({
               La firma se resuelve manualmente por archivo en esta primera versión.
             </p>
           </label>
+
+          <label className="space-y-2">
+            <span className="text-sm font-medium text-[var(--foreground)]">Sesión de chat</span>
+            <select name="sessionId" className="field min-h-14" defaultValue="">
+              <option value="">Usar sesión técnica fallback</option>
+              {projectSessions.map((session) => (
+                <option key={session.id} value={session.id}>
+                  {session.title} ({session.id.slice(0, 8)})
+                </option>
+              ))}
+            </select>
+            <p className="text-xs leading-6 text-[var(--muted)]">
+              Si eliges una sesión, los examples importados quedarán vinculados ahí desde el inicio.
+            </p>
+          </label>
         </div>
 
         <div className="mt-6 flex flex-col gap-3 border-t border-[var(--line)] pt-5 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm leading-7 text-[var(--muted)]">
-            Los examples importados se guardan en una sesión dedicada llamada `Dataset Imports`.
+            Si no eliges sesión, los imports se guardan en la sesión técnica `Dataset Imports`.
           </p>
 
           <FormSubmitButton
