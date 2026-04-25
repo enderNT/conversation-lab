@@ -53,7 +53,10 @@ import {
   toExportDatasetExample,
   validateDatasetExample as validateDatasetExamplePayload,
 } from "@/lib/datasets";
-import { ensureDefaultDatasetSpecs } from "@/lib/dataset-specs";
+import {
+  ensureDefaultDatasetSpecs,
+  parseDatasetSpecImportBundleText,
+} from "@/lib/dataset-specs";
 import {
   createEmbedding,
   generateAssistantReply,
@@ -71,7 +74,11 @@ import {
   normalizeWebhookUrl,
   sendWebhookAsyncChatRequest,
 } from "@/lib/session-chat";
-import type { ActionFormState, DatasetImportActionState } from "@/lib/form-state";
+import type {
+  ActionFormState,
+  DatasetImportActionState,
+  DatasetSpecImportActionState,
+} from "@/lib/form-state";
 import { prisma } from "@/lib/prisma";
 import {
   ARTIFACT_TYPES,
@@ -82,9 +89,11 @@ import {
   DATASET_SCHEMA_FIELD_TYPES,
   TASK_TYPES,
   type DatasetImportSummary,
+  type DatasetSpecImportSummary,
   type DatasetFieldMappingRecord,
   type DatasetSchemaField,
   type ImportedDatasetRowResult,
+  type ImportedDatasetSpecResult,
   type JsonObject,
   type JsonValue,
 } from "@/lib/types";
@@ -346,12 +355,29 @@ function buildActionRefreshSuccessState(message: string): ActionFormState {
 }
 
 const DATASET_IMPORT_SESSION_TITLE = "Dataset Imports";
+const DATASET_SPEC_IMPORT_UPDATED_BY = "import";
 
 function buildDatasetImportState(input: {
   status: "error" | "success";
   message: string;
   summary: DatasetImportSummary | null;
 }): DatasetImportActionState {
+  return {
+    status: input.status,
+    message: input.message,
+    eventId: Date.now(),
+    redirectTo: null,
+    navigationMode: null,
+    shouldRefresh: false,
+    summary: input.summary,
+  };
+}
+
+function buildDatasetSpecImportState(input: {
+  status: "error" | "success";
+  message: string;
+  summary: DatasetSpecImportSummary | null;
+}): DatasetSpecImportActionState {
   return {
     status: input.status,
     message: input.message,
@@ -728,6 +754,163 @@ async function buildNextDatasetSpecVersionSlug(baseSlug: string, version: number
 
     candidateVersion += 1;
   }
+}
+
+function buildDatasetSpecFamilyFilter(baseSlug: string): Prisma.DatasetSpecWhereInput {
+  return {
+    OR: [
+      { slug: baseSlug },
+      { slug: { startsWith: `${baseSlug}_v` } },
+    ],
+  };
+}
+
+function getImportedDatasetSpecDescriptor(input: unknown) {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    return {
+      name: "",
+      slug: "",
+    };
+  }
+
+  const record = input as Record<string, unknown>;
+
+  return {
+    name: typeof record.name === "string" ? record.name.trim() : "",
+    slug: typeof record.slug === "string" ? record.slug.trim() : "",
+  };
+}
+
+function buildImportedDatasetSpecCandidate(input: unknown) {
+  const record =
+    typeof input === "object" && input !== null && !Array.isArray(input)
+      ? (input as Record<string, unknown>)
+      : {};
+
+  return {
+    name: typeof record.name === "string" ? record.name : "",
+    slug: typeof record.slug === "string" ? record.slug : "",
+    description: typeof record.description === "string" ? record.description : "",
+    datasetFormat:
+      typeof record.datasetFormat === "string" ? record.datasetFormat : DatasetFormat.dspy_jsonl,
+    inputSchemaJson: stringifyJsonValue(record.inputSchema ?? []),
+    outputSchemaJson: stringifyJsonValue(record.outputSchema ?? []),
+    mappingHintsJson: stringifyJsonValue(record.mappingHints ?? {}),
+    validationRulesJson: stringifyJsonValue(record.validationRules ?? {}),
+    exportConfigJson: stringifyJsonValue(record.exportConfig ?? {}),
+    version: typeof record.version === "number" ? record.version : 1,
+    isActive: typeof record.isActive === "boolean" ? record.isActive : true,
+    updatedBy: DATASET_SPEC_IMPORT_UPDATED_BY,
+  };
+}
+
+async function createImportedDatasetSpec(
+  input: NormalizedDatasetSpecInput,
+): Promise<ImportedDatasetSpecResult> {
+  const familySlug = stripDatasetSpecVersionSuffix(input.slug);
+  const existingBySlug = await prisma.datasetSpec.findUnique({
+    where: { slug: input.slug },
+    select: {
+      id: true,
+      version: true,
+    },
+  });
+
+  const archiveFamilySpecs = async (tx: Prisma.TransactionClient) => {
+    if (!input.isActive) {
+      return;
+    }
+
+    await tx.datasetSpec.updateMany({
+      where: {
+        isActive: true,
+        ...buildDatasetSpecFamilyFilter(familySlug),
+      },
+      data: {
+        isActive: false,
+        updatedBy: DATASET_SPEC_IMPORT_UPDATED_BY,
+      },
+    });
+  };
+
+  if (!existingBySlug) {
+    await prisma.$transaction(async (tx) => {
+      await archiveFamilySpecs(tx);
+
+      await tx.datasetSpec.create({
+        data: {
+          name: input.name,
+          slug: input.slug,
+          description: input.description,
+          datasetFormat: input.datasetFormat,
+          inputSchemaJson: input.inputSchemaJson,
+          outputSchemaJson: input.outputSchemaJson,
+          mappingHintsJson: input.mappingHintsJson,
+          validationRulesJson: input.validationRulesJson,
+          exportConfigJson: input.exportConfigJson,
+          isActive: input.isActive,
+          version: input.version,
+          createdBy: DATASET_SPEC_IMPORT_UPDATED_BY,
+          updatedBy: DATASET_SPEC_IMPORT_UPDATED_BY,
+        },
+      });
+    });
+
+    return {
+      index: 0,
+      name: input.name,
+      slug: input.slug,
+      finalSlug: input.slug,
+      version: input.version,
+      status: "imported",
+      message: `Se importó ${input.name || input.slug} como ${input.slug}.`,
+    };
+  }
+
+  const nextVersionData = await buildNextDatasetSpecVersionSlug(
+    input.slug,
+    Math.max(input.version, existingBySlug.version + 1),
+  );
+
+  await prisma.$transaction(async (tx) => {
+    await archiveFamilySpecs(tx);
+
+    await tx.datasetSpec.create({
+      data: {
+        name: input.name,
+        slug: nextVersionData.slug,
+        description: input.description,
+        datasetFormat: input.datasetFormat,
+        inputSchemaJson: input.inputSchemaJson,
+        outputSchemaJson: input.outputSchemaJson,
+        mappingHintsJson: input.mappingHintsJson,
+        validationRulesJson: input.validationRulesJson,
+        exportConfigJson: input.exportConfigJson,
+        isActive: input.isActive,
+        version: nextVersionData.version,
+        createdBy: DATASET_SPEC_IMPORT_UPDATED_BY,
+        updatedBy: DATASET_SPEC_IMPORT_UPDATED_BY,
+      },
+    });
+  });
+
+  return {
+    index: 0,
+    name: input.name,
+    slug: input.slug,
+    finalSlug: nextVersionData.slug,
+    version: nextVersionData.version,
+    status: "versioned",
+    message: `El slug ${input.slug} ya existía; se creó ${nextVersionData.slug}.`,
+  };
+}
+
+function buildDatasetSpecImportOutcomeMessage(summary: DatasetSpecImportSummary) {
+  if (summary.importedCount > 0 || summary.versionedCount > 0) {
+    return `Importación completada: ${summary.importedCount} importados, ${summary.versionedCount} versionados y ${summary.rejectedCount} rechazados.`;
+  }
+
+  return "No se pudo importar ningún dataset spec válido del archivo.";
 }
 
 async function updateDatasetSpecRecord(
@@ -4418,6 +4601,109 @@ export async function deleteDatasetSpecWithFeedback(
   return buildActionSuccessState("Dataset spec eliminado correctamente.", {
     redirectTo: "/dataset-specs",
     navigationMode: "replace",
+  });
+}
+
+export async function importDatasetSpecsWithFeedback(
+  _previousState: DatasetSpecImportActionState,
+  formData: FormData,
+): Promise<DatasetSpecImportActionState> {
+  const fileEntry = formData.get("datasetSpecFile");
+
+  if (!(fileEntry instanceof File) || fileEntry.size === 0) {
+    return buildDatasetSpecImportState({
+      status: "error",
+      message: "Selecciona un archivo JSON para importar dataset specs.",
+      summary: null,
+    });
+  }
+
+  let fileText: string;
+
+  try {
+    fileText = await fileEntry.text();
+  } catch (error) {
+    return buildDatasetSpecImportState({
+      status: "error",
+      message: getActionErrorMessage(error, "No fue posible leer el archivo JSON."),
+      summary: null,
+    });
+  }
+
+  let bundle: ReturnType<typeof parseDatasetSpecImportBundleText>;
+
+  try {
+    bundle = parseDatasetSpecImportBundleText(fileText);
+  } catch (error) {
+    return buildDatasetSpecImportState({
+      status: "error",
+      message: getActionErrorMessage(
+        error,
+        "El archivo no contiene un bundle de dataset specs compatible.",
+      ),
+      summary: null,
+    });
+  }
+
+  const results: ImportedDatasetSpecResult[] = [];
+
+  for (const [index, specInput] of bundle.specs.entries()) {
+    const descriptor = getImportedDatasetSpecDescriptor(specInput);
+    const parsed = datasetSpecSchema.safeParse(buildImportedDatasetSpecCandidate(specInput));
+
+    if (!parsed.success) {
+      results.push({
+        index: index + 1,
+        name: descriptor.name,
+        slug: descriptor.slug,
+        finalSlug: descriptor.slug,
+        version: 0,
+        status: "rejected",
+        message: getActionErrorMessage(
+          parsed.error,
+          "El dataset spec importado no tiene un formato válido.",
+        ),
+      });
+      continue;
+    }
+
+    try {
+      const imported = await createImportedDatasetSpec(normalizeDatasetSpecInput(parsed.data));
+
+      results.push({
+        ...imported,
+        index: index + 1,
+      });
+    } catch (error) {
+      results.push({
+        index: index + 1,
+        name: descriptor.name || parsed.data.name,
+        slug: descriptor.slug || parsed.data.slug,
+        finalSlug: descriptor.slug || parsed.data.slug,
+        version: parsed.data.version,
+        status: "rejected",
+        message: getActionErrorMessage(error, "No fue posible importar este dataset spec."),
+      });
+    }
+  }
+
+  const summary: DatasetSpecImportSummary = {
+    fileName: fileEntry.name,
+    importedCount: results.filter((result) => result.status === "imported").length,
+    versionedCount: results.filter((result) => result.status === "versioned").length,
+    rejectedCount: results.filter((result) => result.status === "rejected").length,
+    results,
+  };
+
+  if (summary.importedCount > 0 || summary.versionedCount > 0) {
+    revalidateDatasetPaths();
+  }
+
+  return buildDatasetSpecImportState({
+    status:
+      summary.importedCount > 0 || summary.versionedCount > 0 ? "success" : "error",
+    message: buildDatasetSpecImportOutcomeMessage(summary),
+    summary,
   });
 }
 

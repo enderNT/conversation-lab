@@ -295,6 +295,44 @@ export type DatasetSpecDefinition = {
   version: number;
 };
 
+export type ExportedDatasetSpec = {
+  name: string;
+  slug: string;
+  description: string;
+  datasetFormat: DatasetFormat;
+  inputSchema: DatasetSchemaField[];
+  outputSchema: DatasetSchemaField[];
+  mappingHints: JsonValue;
+  validationRules: JsonValue;
+  exportConfig: JsonValue;
+  isActive: boolean;
+  version: number;
+};
+
+export type DatasetSpecExportBundle = {
+  schemaVersion: 1;
+  exportedAt: string;
+  specs: ExportedDatasetSpec[];
+};
+
+export type ImportedDatasetSpecResult = {
+  index: number;
+  name: string;
+  slug: string;
+  finalSlug: string;
+  version: number;
+  status: "imported" | "versioned" | "rejected";
+  message: string;
+};
+
+export type DatasetSpecImportSummary = {
+  fileName: string;
+  importedCount: number;
+  versionedCount: number;
+  rejectedCount: number;
+  results: ImportedDatasetSpecResult[];
+};
+
 export type SourceSliceMetadata = {
   project_id: string;
   session_id: string;

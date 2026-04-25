@@ -161,7 +161,6 @@ export function DatasetImportForm({
     <div className="space-y-6">
       <form
         action={formAction}
-        encType="multipart/form-data"
         className="surface rounded-[1.8rem] p-5 sm:p-6"
       >
         <div className="flex items-start gap-4">

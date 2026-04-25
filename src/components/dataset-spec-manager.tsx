@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { DatasetSpecImportForm } from "@/components/dataset-spec-import-form";
 import { DatasetSpecForm, type DatasetSpecCatalogRecord } from "@/components/dataset-spec-form";
 import { cn } from "@/lib/utils";
 
@@ -52,6 +53,49 @@ function SearchIcon() {
   );
 }
 
+function buildDatasetSpecExportHref(ids: string[]) {
+  const params = new URLSearchParams();
+
+  ids.forEach((id) => {
+    params.append("ids", id);
+  });
+
+  const query = params.toString();
+
+  return query ? `/api/dataset-specs/export?${query}` : "/api/dataset-specs/export";
+}
+
+function HeaderActionLink({
+  href,
+  disabled,
+  children,
+}: {
+  href: string;
+  disabled?: boolean;
+  children: React.ReactNode;
+}) {
+  const className = cn(
+    "inline-flex shrink-0 items-center justify-center rounded-full px-4 py-2 text-sm font-semibold transition",
+    disabled
+      ? "cursor-not-allowed border border-[var(--line)] bg-white/60 text-[var(--muted)]"
+      : "border border-[var(--line)] bg-white/80 text-[var(--foreground)] hover:-translate-y-px hover:border-[color-mix(in_srgb,var(--foreground)_16%,transparent)] hover:bg-white",
+  );
+
+  if (disabled) {
+    return (
+      <span aria-disabled="true" className={className}>
+        {children}
+      </span>
+    );
+  }
+
+  return (
+    <a href={href} className={className}>
+      {children}
+    </a>
+  );
+}
+
 export function DatasetSpecManager({
   datasetSpecs,
 }: {
@@ -60,6 +104,7 @@ export function DatasetSpecManager({
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(datasetSpecs[0]?.id ?? null);
   const [isCreating, setIsCreating] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
   const [visibility, setVisibility] = useState<DatasetSpecVisibility>("active");
 
   const catalogSummary = useMemo(
@@ -98,12 +143,20 @@ export function DatasetSpecManager({
     : filteredSpecs.find((spec) => spec.id === selectedId) ??
       datasetSpecs.find((spec) => spec.id === selectedId) ??
       null;
+  const selectedExportHref = useMemo(
+    () => buildDatasetSpecExportHref(selectedSpec ? [selectedSpec.id] : []),
+    [selectedSpec],
+  );
+  const visibleExportHref = useMemo(
+    () => buildDatasetSpecExportHref(filteredSpecs.map((spec) => spec.id)),
+    [filteredSpecs],
+  );
 
   return (
     <div className="grid gap-6 xl:grid-cols-[24rem_minmax(0,1fr)] xl:items-start">
       <section className="surface overflow-hidden rounded-[1.9rem]">
         <div className="border-b border-[var(--line)] bg-[color-mix(in_srgb,var(--card)_80%,white_24%)] px-5 py-6 sm:px-6">
-          <div className="flex items-start justify-between gap-4">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div>
               <p className="mono text-[0.68rem] uppercase tracking-[0.28em] text-[var(--muted)]">
                 Registry
@@ -116,19 +169,34 @@ export function DatasetSpecManager({
               </p>
             </div>
 
-            <button
-              type="button"
-              className="inline-flex shrink-0 items-center gap-2 rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white transition hover:-translate-y-px hover:bg-[var(--accent-strong)]"
-              onClick={() => {
-                setIsCreating(true);
-                setSelectedId(null);
-              }}
-            >
-              <span aria-hidden="true" className="text-base leading-none">
-                +
-              </span>
-              Nuevo spec
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <HeaderActionLink href={selectedExportHref} disabled={!selectedSpec}>
+                Exportar seleccionado
+              </HeaderActionLink>
+              <HeaderActionLink href={visibleExportHref} disabled={filteredSpecs.length === 0}>
+                Exportar visibles
+              </HeaderActionLink>
+              <button
+                type="button"
+                className="inline-flex shrink-0 items-center justify-center rounded-full border border-[var(--line)] bg-white/80 px-4 py-2 text-sm font-semibold text-[var(--foreground)] transition hover:-translate-y-px hover:border-[color-mix(in_srgb,var(--foreground)_16%,transparent)] hover:bg-white"
+                onClick={() => setIsImporting((currentValue) => !currentValue)}
+              >
+                Importar JSON
+              </button>
+              <button
+                type="button"
+                className="inline-flex shrink-0 items-center gap-2 rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white transition hover:-translate-y-px hover:bg-[var(--accent-strong)]"
+                onClick={() => {
+                  setIsCreating(true);
+                  setSelectedId(null);
+                }}
+              >
+                <span aria-hidden="true" className="text-base leading-none">
+                  +
+                </span>
+                Nuevo spec
+              </button>
+            </div>
           </div>
 
           <div className="mt-5 grid grid-cols-3 gap-2">
@@ -312,7 +380,15 @@ export function DatasetSpecManager({
             ) : null}
           </div>
 
-          <div className="mt-10">
+          <div className="mt-10 space-y-6">
+            {isImporting ? (
+              <DatasetSpecImportForm
+                onClose={() => {
+                  setIsImporting(false);
+                }}
+              />
+            ) : null}
+
             <DatasetSpecForm
               key={selectedSpec?.id ?? "new-dataset-spec"}
               datasetSpec={selectedSpec}
