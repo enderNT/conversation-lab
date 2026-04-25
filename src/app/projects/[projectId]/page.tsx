@@ -145,6 +145,7 @@ export default async function ProjectDetailPage({
             <SessionCreateForm
               projectId={project.id}
               datasetExamplesHref={`/dataset-examples?projectId=${project.id}`}
+              datasetImportHref={`/projects/${project.id}/dataset-import`}
             />
           </div>
         </div>

@@ -29,9 +29,11 @@ function DatasetGlyph() {
 export function SessionCreateForm({
   projectId,
   datasetExamplesHref,
+  datasetImportHref,
 }: {
   projectId: string;
   datasetExamplesHref?: string;
+  datasetImportHref?: string;
 }) {
   const [state, formAction] = useActionState(
     createSessionWithFeedback.bind(null, projectId),
@@ -69,15 +71,26 @@ export function SessionCreateForm({
         <p className="text-sm italic leading-7 text-[var(--muted)]">
           Project context will be automatically synced to the new session.
         </p>
-        {datasetExamplesHref ? (
-          <Link
-            href={datasetExamplesHref}
-            className="inline-flex items-center gap-2 text-sm font-semibold text-[var(--foreground)] transition hover:text-[var(--accent)]"
-          >
-            <DatasetGlyph />
-            <span>View Dataset Examples</span>
-          </Link>
-        ) : null}
+        <div className="flex flex-wrap items-center gap-4">
+          {datasetImportHref ? (
+            <Link
+              href={datasetImportHref}
+              className="inline-flex items-center gap-2 text-sm font-semibold text-[var(--foreground)] transition hover:text-[var(--accent)]"
+            >
+              <LaunchArrowIcon />
+              <span>Import JSONL</span>
+            </Link>
+          ) : null}
+          {datasetExamplesHref ? (
+            <Link
+              href={datasetExamplesHref}
+              className="inline-flex items-center gap-2 text-sm font-semibold text-[var(--foreground)] transition hover:text-[var(--accent)]"
+            >
+              <DatasetGlyph />
+              <span>View Dataset Examples</span>
+            </Link>
+          ) : null}
+        </div>
       </div>
     </form>
   );

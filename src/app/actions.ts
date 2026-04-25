@@ -1,5 +1,6 @@
 "use server";
 
+import { createHash } from "node:crypto";
 import {
   ChatTransport,
   CaseReviewStatus,
@@ -35,9 +36,15 @@ import {
   normalizeDatasetLlmContextSelection,
 } from "@/lib/dataset-llm";
 import {
+  buildImportedDatasetMappings,
+  buildImportedSourceSliceMetadataJson,
+  buildImportedSourceSliceRecord,
   buildSourceSliceMetadata,
+  canonicalizeJsonValue,
   deriveLastUserMessage as deriveDatasetLastUserMessage,
   normalizeRetrievalTopK,
+  parseDatasetSchema,
+  parseImportedDatasetText,
   parseStrictJsonValue as parseStrictDatasetJsonValue,
   resolveFieldMapping,
   sourceSliceFromPrisma,
@@ -64,7 +71,7 @@ import {
   normalizeWebhookUrl,
   sendWebhookAsyncChatRequest,
 } from "@/lib/session-chat";
-import type { ActionFormState } from "@/lib/form-state";
+import type { ActionFormState, DatasetImportActionState } from "@/lib/form-state";
 import { prisma } from "@/lib/prisma";
 import {
   ARTIFACT_TYPES,
@@ -74,8 +81,10 @@ import {
   DATASET_MAPPING_SOURCES,
   DATASET_SCHEMA_FIELD_TYPES,
   TASK_TYPES,
+  type DatasetImportSummary,
   type DatasetFieldMappingRecord,
   type DatasetSchemaField,
+  type ImportedDatasetRowResult,
   type JsonObject,
   type JsonValue,
 } from "@/lib/types";
@@ -255,6 +264,10 @@ const datasetExampleSchema = z.object({
   updatedBy: z.string().trim().default("human"),
 });
 
+const datasetImportSchema = z.object({
+  datasetSpecId: z.string().trim().min(1, "Selecciona un dataset spec para importar el archivo."),
+});
+
 const datasetFieldGenerationSchema = z.object({
   llmConfigurationId: z.string().trim().min(1, "Selecciona una configuración LLM global."),
   side: z.enum(DATASET_FIELD_SIDES),
@@ -332,6 +345,24 @@ function buildActionRefreshSuccessState(message: string): ActionFormState {
   };
 }
 
+const DATASET_IMPORT_SESSION_TITLE = "Dataset Imports";
+
+function buildDatasetImportState(input: {
+  status: "error" | "success";
+  message: string;
+  summary: DatasetImportSummary | null;
+}): DatasetImportActionState {
+  return {
+    status: input.status,
+    message: input.message,
+    eventId: Date.now(),
+    redirectTo: null,
+    navigationMode: null,
+    shouldRefresh: false,
+    summary: input.summary,
+  };
+}
+
 function getActionErrorMessage(error: unknown, fallbackMessage: string) {
   if (error instanceof z.ZodError) {
     return error.issues[0]?.message ?? fallbackMessage;
@@ -374,6 +405,79 @@ function parseDatasetJsonObject(value: string, label: string) {
   }
 
   return parsedValue as JsonObject;
+}
+
+function buildDatasetImportFingerprint(input: {
+  projectId: string;
+  datasetSpecId: string;
+  inputPayload: JsonObject;
+  outputPayload: JsonObject;
+}) {
+  return createHash("sha256")
+    .update(
+      [
+        input.projectId,
+        input.datasetSpecId,
+        canonicalizeJsonValue(input.inputPayload),
+        canonicalizeJsonValue(input.outputPayload),
+      ].join(":"),
+    )
+    .digest("hex");
+}
+
+function buildDatasetImportValidationMessage(validationState: {
+  structuralErrors: string[];
+  semanticWarnings: string[];
+}) {
+  return [...validationState.structuralErrors, ...validationState.semanticWarnings].join(" ");
+}
+
+function buildDatasetImportOutcomeMessage(summary: DatasetImportSummary) {
+  if (summary.importedCount > 0) {
+    return `Importación completada: ${summary.importedCount} importados, ${summary.duplicateCount} duplicados y ${summary.rejectedCount} rechazados.`;
+  }
+
+  if (summary.duplicateCount > 0 && summary.rejectedCount === 0) {
+    return "No se importaron nuevos dataset examples porque todas las filas ya existían.";
+  }
+
+  if (summary.duplicateCount > 0) {
+    return `No se importaron nuevos dataset examples. ${summary.duplicateCount} filas ya existían y ${summary.rejectedCount} fueron rechazadas.`;
+  }
+
+  return "No se pudo importar ninguna fila válida del archivo.";
+}
+
+async function findOrCreateDatasetImportSession(projectId: string) {
+  const existingSession = await prisma.session.findFirst({
+    where: {
+      projectId,
+      title: DATASET_IMPORT_SESSION_TITLE,
+    },
+    orderBy: {
+      createdAt: "asc",
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  if (existingSession) {
+    return existingSession.id;
+  }
+
+  const createdSession = await prisma.session.create({
+    data: {
+      projectId,
+      title: DATASET_IMPORT_SESSION_TITLE,
+      curationNotes: "Sesión auto-creada para centralizar imports JSONL de dataset examples.",
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  return createdSession.id;
 }
 
 function buildDatasetFieldRagQuery(promptText: string) {
@@ -4314,6 +4418,316 @@ export async function deleteDatasetSpecWithFeedback(
   return buildActionSuccessState("Dataset spec eliminado correctamente.", {
     redirectTo: "/dataset-specs",
     navigationMode: "replace",
+  });
+}
+
+export async function importDatasetExamplesWithFeedback(
+  projectId: string,
+  _previousState: DatasetImportActionState,
+  formData: FormData,
+): Promise<DatasetImportActionState> {
+  const parsed = datasetImportSchema.safeParse({
+    datasetSpecId: asOptionalString(formData.get("datasetSpecId")),
+  });
+
+  if (!parsed.success) {
+    return buildDatasetImportState({
+      status: "error",
+      message: getActionErrorMessage(parsed.error, "No fue posible preparar la importación."),
+      summary: null,
+    });
+  }
+
+  const fileEntry = formData.get("datasetFile");
+
+  if (!(fileEntry instanceof File) || fileEntry.size === 0) {
+    return buildDatasetImportState({
+      status: "error",
+      message: "Selecciona un archivo JSONL o NDJSON antes de importar.",
+      summary: null,
+    });
+  }
+
+  const fileName = fileEntry.name.trim() || "dataset-import.jsonl";
+  let fileContents = "";
+
+  try {
+    fileContents = await fileEntry.text();
+  } catch (error) {
+    return buildDatasetImportState({
+      status: "error",
+      message: getActionErrorMessage(error, "No fue posible leer el archivo seleccionado."),
+      summary: null,
+    });
+  }
+
+  const parsedRows = parseImportedDatasetText(fileContents);
+
+  if (parsedRows.length === 0) {
+    return buildDatasetImportState({
+      status: "error",
+      message: "El archivo no contiene filas JSONL válidas para procesar.",
+      summary: null,
+    });
+  }
+
+  await ensureDefaultDatasetSpecs();
+
+  const [project, datasetSpec, existingDatasetExamples] = await Promise.all([
+    prisma.project.findUnique({
+      where: { id: projectId },
+      select: { id: true },
+    }),
+    prisma.datasetSpec.findUnique({
+      where: { id: parsed.data.datasetSpecId },
+      select: {
+        id: true,
+        name: true,
+        datasetFormat: true,
+        version: true,
+        inputSchemaJson: true,
+        outputSchemaJson: true,
+        validationRulesJson: true,
+      },
+    }),
+    prisma.datasetExample.findMany({
+      where: {
+        datasetSpecId: parsed.data.datasetSpecId,
+        sourceSlice: {
+          projectId,
+        },
+      },
+      select: {
+        inputPayloadJson: true,
+        outputPayloadJson: true,
+      },
+    }),
+  ]);
+
+  if (!project) {
+    return buildDatasetImportState({
+      status: "error",
+      message: "El proyecto ya no existe.",
+      summary: null,
+    });
+  }
+
+  if (!datasetSpec) {
+    return buildDatasetImportState({
+      status: "error",
+      message: "El dataset spec seleccionado no existe.",
+      summary: null,
+    });
+  }
+
+  const inputSchema = parseDatasetSchema(datasetSpec.inputSchemaJson);
+  const outputSchema = parseDatasetSchema(datasetSpec.outputSchemaJson);
+  const seenFingerprints = new Set(
+    existingDatasetExamples.map((datasetExample) =>
+      buildDatasetImportFingerprint({
+        projectId,
+        datasetSpecId: datasetSpec.id,
+        inputPayload: datasetExample.inputPayloadJson as JsonObject,
+        outputPayload: datasetExample.outputPayloadJson as JsonObject,
+      }),
+    ),
+  );
+
+  const results: ImportedDatasetRowResult[] = [];
+  let importedCount = 0;
+  let duplicateCount = 0;
+  let rejectedCount = 0;
+  let datasetImportSessionId: string | null = null;
+
+  for (const parsedRow of parsedRows) {
+    if (!parsedRow.row) {
+      rejectedCount += 1;
+      results.push({
+        lineNumber: parsedRow.lineNumber,
+        status: "rejected",
+        message: parsedRow.error ?? "La línea no pudo procesarse.",
+      });
+      continue;
+    }
+    const importedRow = parsedRow.row;
+
+    const validationState = validateDatasetExamplePayload({
+      datasetSpec,
+      inputPayload: importedRow.input,
+      outputPayload: importedRow.output,
+    });
+    const validationMessage = buildDatasetImportValidationMessage(validationState);
+
+    if (validationMessage) {
+      rejectedCount += 1;
+      results.push({
+        lineNumber: parsedRow.lineNumber,
+        status: "rejected",
+        message: validationMessage,
+      });
+      continue;
+    }
+
+    const importFingerprint = buildDatasetImportFingerprint({
+      projectId,
+      datasetSpecId: datasetSpec.id,
+      inputPayload: importedRow.input,
+      outputPayload: importedRow.output,
+    });
+
+    if (seenFingerprints.has(importFingerprint)) {
+      duplicateCount += 1;
+      results.push({
+        lineNumber: parsedRow.lineNumber,
+        status: "duplicate",
+        message: "Fila duplicada: ya existe un dataset example idéntico en este proyecto.",
+      });
+      continue;
+    }
+
+    const importedAt = new Date().toISOString();
+    const sourceSliceDraft = buildImportedSourceSliceRecord({
+      projectId,
+      sessionId: datasetImportSessionId ?? "",
+      fileName,
+      lineNumber: parsedRow.lineNumber,
+    });
+    const sourceMetadataJson = buildImportedSourceSliceMetadataJson({
+      projectId,
+      sessionId: datasetImportSessionId ?? "",
+      fileName,
+      lineNumber: parsedRow.lineNumber,
+      importedAt,
+      originalMetadata: importedRow.metadata,
+    });
+    const mappings = buildImportedDatasetMappings({
+      inputSchema,
+      outputSchema,
+      inputPayload: importedRow.input,
+      outputPayload: importedRow.output,
+    });
+
+    try {
+      if (!datasetImportSessionId) {
+        datasetImportSessionId = await findOrCreateDatasetImportSession(projectId);
+      }
+      const importSessionId = datasetImportSessionId;
+
+      if (!importSessionId) {
+        throw new Error("No fue posible inicializar la sesión de imports.");
+      }
+
+      const hydratedSourceSlice = {
+        ...sourceSliceDraft,
+        sessionId: importSessionId,
+        sourceMetadata: {
+          ...sourceSliceDraft.sourceMetadata,
+          session_id: importSessionId,
+        },
+      };
+      const hydratedSourceMetadataJson = {
+        ...sourceMetadataJson,
+        session_id: importSessionId,
+      };
+      const persistedMappings = buildPersistedMappings({
+        mappings,
+        sourceSlice: hydratedSourceSlice,
+      });
+
+      const createdDatasetExample = await prisma.$transaction(async (tx) => {
+        const sourceSlice = await tx.sourceSlice.create({
+          data: {
+            projectId,
+            sessionId: importSessionId,
+            title: hydratedSourceSlice.title,
+            conversationSliceJson: [] as Prisma.InputJsonValue,
+            surroundingContextJson: [] as Prisma.InputJsonValue,
+            selectedTurnIdsJson: [] as Prisma.InputJsonValue,
+            lastUserMessage: hydratedSourceSlice.lastUserMessage,
+            sourceSummary: hydratedSourceSlice.sourceSummary,
+            sourceMetadataJson: hydratedSourceMetadataJson as Prisma.InputJsonValue,
+          },
+        });
+
+        const datasetExample = await tx.datasetExample.create({
+          data: {
+            sourceSliceId: sourceSlice.id,
+            datasetSpecId: datasetSpec.id,
+            title: null,
+            inputPayloadJson: importedRow.input as Prisma.InputJsonValue,
+            outputPayloadJson: importedRow.output as Prisma.InputJsonValue,
+            validationStateJson: validationState as Prisma.InputJsonValue,
+            provenanceJson: {
+              import_mode: "jsonl_file",
+              import_hash: importFingerprint,
+              source_file_name: fileName,
+              source_line_number: parsedRow.lineNumber,
+              imported_at: importedAt,
+              source_session_id: importSessionId,
+              dataset_format: datasetSpec.datasetFormat,
+              ...(importedRow.metadata
+                ? { original_metadata: importedRow.metadata }
+                : {}),
+            } as Prisma.InputJsonValue,
+            reviewStatus: DatasetExampleReviewStatus.draft,
+            version: datasetSpec.version,
+            createdBy: "human",
+            updatedBy: "human",
+          },
+        });
+
+        for (const mapping of persistedMappings) {
+          await tx.datasetFieldMapping.create({
+            data: {
+              datasetExampleId: datasetExample.id,
+              ...mapping,
+            },
+          });
+        }
+
+        return datasetExample;
+      });
+
+      seenFingerprints.add(importFingerprint);
+      importedCount += 1;
+      results.push({
+        lineNumber: parsedRow.lineNumber,
+        status: "imported",
+        message: "Dataset example importado correctamente.",
+        datasetExampleId: createdDatasetExample.id,
+      });
+    } catch (error) {
+      rejectedCount += 1;
+      results.push({
+        lineNumber: parsedRow.lineNumber,
+        status: "rejected",
+        message: getActionErrorMessage(error, "No fue posible guardar esta fila."),
+      });
+    }
+  }
+
+  const summary: DatasetImportSummary = {
+    fileName,
+    datasetSpecId: datasetSpec.id,
+    datasetSpecName: datasetSpec.name,
+    sessionId: datasetImportSessionId,
+    importedCount,
+    duplicateCount,
+    rejectedCount,
+    results,
+  };
+
+  if (datasetImportSessionId) {
+    revalidateDatasetPaths(projectId, datasetImportSessionId);
+  } else {
+    revalidateDatasetPaths(projectId);
+  }
+  revalidatePath(`/projects/${projectId}/dataset-import`);
+
+  return buildDatasetImportState({
+    status: importedCount > 0 || duplicateCount > 0 ? "success" : "error",
+    message: buildDatasetImportOutcomeMessage(summary),
+    summary,
   });
 }
 

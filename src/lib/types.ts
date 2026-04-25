@@ -352,6 +352,30 @@ export type DatasetValidationState = {
   shapeMatches: boolean;
 };
 
+export type ImportedDatasetRow = {
+  input: JsonObject;
+  output: JsonObject;
+  metadata?: JsonObject;
+};
+
+export type ImportedDatasetRowResult = {
+  lineNumber: number;
+  status: "imported" | "duplicate" | "rejected";
+  message: string;
+  datasetExampleId?: string;
+};
+
+export type DatasetImportSummary = {
+  fileName: string;
+  datasetSpecId: string;
+  datasetSpecName: string;
+  sessionId: string | null;
+  importedCount: number;
+  duplicateCount: number;
+  rejectedCount: number;
+  results: ImportedDatasetRowResult[];
+};
+
 export type ExportedDatasetExampleRow = {
   input: JsonObject;
   output: JsonObject;

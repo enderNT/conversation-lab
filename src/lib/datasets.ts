@@ -6,6 +6,7 @@ import {
 } from "@/lib/dataset-llm";
 import type {
   ConversationSliceItem,
+  ImportedDatasetRow,
   DatasetFieldMappingRecord,
   DatasetSchemaField,
   DatasetSchemaFieldType,
@@ -41,7 +42,13 @@ type DatasetResolveOptions = {
   templateContext?: DatasetTemplateRenderContext;
 };
 
-function isJsonObject(value: JsonValue): value is JsonObject {
+type ParsedImportedDatasetRow = {
+  lineNumber: number;
+  row: ImportedDatasetRow | null;
+  error: string | null;
+};
+
+function isJsonObject(value: unknown): value is JsonObject {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
@@ -172,6 +179,160 @@ export function buildSourceSliceMetadata(input: {
       conversation_version: 3,
     },
   };
+}
+
+export function canonicalizeJsonValue(value: JsonValue): string {
+  const normalize = (currentValue: JsonValue): JsonValue => {
+    if (Array.isArray(currentValue)) {
+      return currentValue.map(normalize);
+    }
+
+    if (!isJsonObject(currentValue)) {
+      return currentValue;
+    }
+
+    return Object.keys(currentValue)
+      .sort((left, right) => left.localeCompare(right))
+      .reduce<JsonObject>((normalizedObject, key) => {
+        normalizedObject[key] = normalize(currentValue[key] as JsonValue);
+        return normalizedObject;
+      }, {});
+  };
+
+  return JSON.stringify(normalize(value));
+}
+
+export function buildImportedSourceSliceRecord(input: {
+  projectId: string;
+  sessionId: string;
+  fileName: string;
+  lineNumber: number;
+}): SourceSliceRecord {
+  return {
+    projectId: input.projectId,
+    sessionId: input.sessionId,
+    title: `${input.fileName} · row ${input.lineNumber}`,
+    conversationSlice: [],
+    surroundingContext: [],
+    selectedTurnIds: [],
+    lastUserMessage: `Imported row ${input.lineNumber} from ${input.fileName}`,
+    sourceSummary: `Imported from ${input.fileName} line ${input.lineNumber}.`,
+    sourceMetadata: {
+      project_id: input.projectId,
+      session_id: input.sessionId,
+      selected_turn_ids: [],
+      selected_range: {
+        start_order_index: 0,
+        end_order_index: 0,
+        turn_count: 0,
+      },
+      provenance: {
+        source: "jsonl_import",
+        selection_mode: "file_row",
+        conversation_version: 1,
+      },
+    },
+  };
+}
+
+export function buildImportedSourceSliceMetadataJson(input: {
+  projectId: string;
+  sessionId: string;
+  fileName: string;
+  lineNumber: number;
+  importedAt: string;
+  originalMetadata?: JsonObject;
+}) {
+  return {
+    project_id: input.projectId,
+    session_id: input.sessionId,
+    selected_turn_ids: [],
+    selected_range: {
+      start_order_index: 0,
+      end_order_index: 0,
+      turn_count: 0,
+    },
+    provenance: {
+      source: "jsonl_import",
+      selection_mode: "file_row",
+      conversation_version: 1,
+    },
+    import: {
+      file_name: input.fileName,
+      line_number: input.lineNumber,
+      imported_at: input.importedAt,
+    },
+    ...(input.originalMetadata ? { original_metadata: input.originalMetadata } : {}),
+  } satisfies JsonObject;
+}
+
+export function parseImportedDatasetText(value: string): ParsedImportedDatasetRow[] {
+  return value
+    .split(/\r?\n/)
+    .map((line, index) => ({
+      lineNumber: index + 1,
+      line,
+    }))
+    .filter(({ line }) => line.trim().length > 0)
+    .map<ParsedImportedDatasetRow>(({ lineNumber, line }) => {
+      let parsedValue: JsonValue;
+
+      try {
+        parsedValue = JSON.parse(line) as JsonValue;
+      } catch {
+        return {
+          lineNumber,
+          row: null,
+          error: "La línea no contiene JSON válido.",
+        };
+      }
+
+      if (!isJsonObject(parsedValue)) {
+        return {
+          lineNumber,
+          row: null,
+          error: "La línea debe ser un objeto JSON.",
+        };
+      }
+
+      const inputValue = parsedValue.input as JsonValue | undefined;
+      const outputValue = parsedValue.output as JsonValue | undefined;
+      const metadataValue = parsedValue.metadata as JsonValue | undefined;
+
+      if (!isJsonObject(inputValue)) {
+        return {
+          lineNumber,
+          row: null,
+          error: "`input` debe ser un objeto JSON.",
+        };
+      }
+
+      if (!isJsonObject(outputValue)) {
+        return {
+          lineNumber,
+          row: null,
+          error: "`output` debe ser un objeto JSON.",
+        };
+      }
+
+      if (metadataValue !== undefined && !isJsonObject(metadataValue)) {
+        return {
+          lineNumber,
+          row: null,
+          error: "`metadata` debe ser un objeto JSON cuando existe.",
+        };
+      }
+
+      return {
+        lineNumber,
+        row: {
+          input: inputValue,
+          output: outputValue,
+          ...(metadataValue ? { metadata: metadataValue } : {}),
+        },
+        error: null,
+      };
+    });
 }
 
 export function parseTransformChainText(value: string) {
@@ -772,6 +933,42 @@ export function buildDefaultMappings(schema: DatasetSchemaField[], side: "input"
       ragGeneratedValueText: "",
     };
   });
+}
+
+export function buildImportedDatasetMappings(input: {
+  inputSchema: DatasetSchemaField[];
+  outputSchema: DatasetSchemaField[];
+  inputPayload: JsonObject;
+  outputPayload: JsonObject;
+}) {
+  const buildMappingsForSide = (
+    schema: DatasetSchemaField[],
+    side: "input" | "output",
+    payload: JsonObject,
+  ) =>
+    schema.map<DatasetFieldMappingRecord>((field) => ({
+      side,
+      fieldKey: field.key,
+      sourceKey: "manual",
+      sourcePath: "",
+      transformChain: [],
+      constantValueText: "",
+      manualValueText:
+        payload[field.key] === undefined ? "" : stringifyJsonValue(payload[field.key]),
+      llmConfigurationId: "",
+      llmPromptText: "",
+      llmContextSelection: DEFAULT_DATASET_LLM_CONTEXT_SELECTION,
+      llmGeneratedValueText: "",
+      ragConfigurationId: "",
+      ragPromptText: "",
+      ragTopK: 1,
+      ragGeneratedValueText: "",
+    }));
+
+  return [
+    ...buildMappingsForSide(input.inputSchema, "input", input.inputPayload),
+    ...buildMappingsForSide(input.outputSchema, "output", input.outputPayload),
+  ];
 }
 
 export function hydrateMappingsFromStored(input: {
