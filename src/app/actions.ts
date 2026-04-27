@@ -5996,27 +5996,10 @@ export async function exportDatasetExamples(filters?: {
         : {}),
     },
     orderBy: { updatedAt: "desc" },
-    include: {
-      datasetSpec: {
-        select: {
-          slug: true,
-          version: true,
-        },
-      },
-      sourceSlice: {
-        select: {
-          id: true,
-        },
-      },
-    },
   });
 
   return examples.map((example) =>
     toExportDatasetExample({
-      datasetExampleId: example.id,
-      sourceSliceId: example.sourceSlice.id,
-      specSlug: example.datasetSpec.slug,
-      version: example.datasetSpec.version,
       inputPayload: example.inputPayloadJson as JsonObject,
       outputPayload: example.outputPayloadJson as JsonObject,
     }),

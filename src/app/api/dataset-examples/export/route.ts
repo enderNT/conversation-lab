@@ -49,27 +49,10 @@ export async function GET(request: Request) {
         : {}),
     },
     orderBy: { updatedAt: "desc" },
-    include: {
-      datasetSpec: {
-        select: {
-          slug: true,
-          version: true,
-        },
-      },
-      sourceSlice: {
-        select: {
-          id: true,
-        },
-      },
-    },
   });
 
   const rows = datasetExamples.map((datasetExample) =>
     toExportDatasetExample({
-      datasetExampleId: datasetExample.id,
-      sourceSliceId: datasetExample.sourceSlice.id,
-      specSlug: datasetExample.datasetSpec.slug,
-      version: datasetExample.datasetSpec.version,
       inputPayload: datasetExample.inputPayloadJson as JsonObject,
       outputPayload: datasetExample.outputPayloadJson as JsonObject,
     }),

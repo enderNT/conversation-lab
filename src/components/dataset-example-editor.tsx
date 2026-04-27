@@ -354,8 +354,10 @@ export function DatasetExampleEditor(props: {
   const [outputPayloadText, setOutputPayloadText] = useState(
     JSON.stringify(props.initialOutputPayload, null, 2),
   );
-  const [inputManualOverride, setInputManualOverride] = useState(props.mode === "edit");
-  const [outputManualOverride, setOutputManualOverride] = useState(props.mode === "edit");
+  const [inputManualOverride, setInputManualOverride] = useState(false);
+  const [outputManualOverride, setOutputManualOverride] = useState(false);
+  const [inputJsonEditMode, setInputJsonEditMode] = useState(false);
+  const [outputJsonEditMode, setOutputJsonEditMode] = useState(false);
   const [showSchema, setShowSchema] = useState(false);
   const [activeFieldKey, setActiveFieldKey] = useState<string | null>(null);
   const [previewModalState, setPreviewModalState] = useState<PreviewModalState | null>(null);
@@ -526,6 +528,42 @@ export function DatasetExampleEditor(props: {
   const effectiveOutputPayloadText = outputManualOverride
     ? outputPayloadText
     : computedOutputPayloadJson;
+
+  useEffect(() => {
+    if (!inputManualOverride) {
+      setInputPayloadText(computedInputPayloadJson);
+    }
+  }, [computedInputPayloadJson, inputManualOverride]);
+
+  useEffect(() => {
+    if (!outputManualOverride) {
+      setOutputPayloadText(computedOutputPayloadJson);
+    }
+  }, [computedOutputPayloadJson, outputManualOverride]);
+
+  function enableInputManualOverride() {
+    setInputPayloadText(computedInputPayloadJson);
+    setInputManualOverride(true);
+    setInputJsonEditMode(true);
+  }
+
+  function enableOutputManualOverride() {
+    setOutputPayloadText(computedOutputPayloadJson);
+    setOutputManualOverride(true);
+    setOutputJsonEditMode(true);
+  }
+
+  function resetInputManualOverride() {
+    setInputPayloadText(computedInputPayloadJson);
+    setInputManualOverride(false);
+    setInputJsonEditMode(false);
+  }
+
+  function resetOutputManualOverride() {
+    setOutputPayloadText(computedOutputPayloadJson);
+    setOutputManualOverride(false);
+    setOutputJsonEditMode(false);
+  }
   const fieldSteps = useMemo<DatasetFieldStep[]>(() => {
     if (!selectedSpec) {
       return [];
@@ -2288,25 +2326,33 @@ export function DatasetExampleEditor(props: {
                       <button
                         type="button"
                         className="text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--muted)]"
-                        onClick={() => setInputManualOverride((current) => !current)}
+                        onClick={() => {
+                          if (inputJsonEditMode) {
+                            setInputJsonEditMode(false);
+                            return;
+                          }
+
+                          enableInputManualOverride();
+                        }}
                       >
-                        {inputManualOverride ? "Preview" : "Editar"}
+                        {inputJsonEditMode ? "Preview" : "Editar"}
                       </button>
                       <button
                         type="button"
                         className="text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--muted)]"
-                        onClick={() => setInputManualOverride(false)}
+                        onClick={resetInputManualOverride}
                       >
                         Reset
                       </button>
                     </div>
                   </div>
-                  {inputManualOverride ? (
+                  {inputJsonEditMode ? (
                     <textarea
                       className="field mt-3 min-h-48 font-mono text-xs"
                       value={effectiveInputPayloadText}
                       onChange={(event) => {
                         setInputManualOverride(true);
+                        setInputJsonEditMode(true);
                         setInputPayloadText(event.target.value);
                       }}
                     />
@@ -2326,25 +2372,33 @@ export function DatasetExampleEditor(props: {
                       <button
                         type="button"
                         className="text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--muted)]"
-                        onClick={() => setOutputManualOverride((current) => !current)}
+                        onClick={() => {
+                          if (outputJsonEditMode) {
+                            setOutputJsonEditMode(false);
+                            return;
+                          }
+
+                          enableOutputManualOverride();
+                        }}
                       >
-                        {outputManualOverride ? "Preview" : "Editar"}
+                        {outputJsonEditMode ? "Preview" : "Editar"}
                       </button>
                       <button
                         type="button"
                         className="text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--muted)]"
-                        onClick={() => setOutputManualOverride(false)}
+                        onClick={resetOutputManualOverride}
                       >
                         Reset
                       </button>
                     </div>
                   </div>
-                  {outputManualOverride ? (
+                  {outputJsonEditMode ? (
                     <textarea
                       className="field mt-3 min-h-48 font-mono text-xs"
                       value={effectiveOutputPayloadText}
                       onChange={(event) => {
                         setOutputManualOverride(true);
+                        setOutputJsonEditMode(true);
                         setOutputPayloadText(event.target.value);
                       }}
                     />

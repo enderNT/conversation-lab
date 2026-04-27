@@ -70,7 +70,7 @@ export default async function ExportHubPage({
             Exporta dataset examples a JSONL DSPy sin el pipeline viejo de artefactos.
           </h1>
           <p className="mt-4 max-w-3xl text-base leading-8 text-[var(--muted)]">
-            Filtra por proyecto, spec, estado y versión; cada línea preserva el `spec`, la `version` y el `sourceSliceId`.
+            Filtra por proyecto, spec, estado y versión; cada línea sale lista para usar en DSPy con solo `input` y `output`.
           </p>
         </div>
 

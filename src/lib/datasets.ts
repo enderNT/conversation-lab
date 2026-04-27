@@ -719,22 +719,12 @@ export function validateDatasetExample(input: {
 }
 
 export function toExportDatasetExample(input: {
-  datasetExampleId: string;
-  sourceSliceId: string;
-  specSlug: string;
-  version: number;
   inputPayload: JsonObject;
   outputPayload: JsonObject;
 }) {
   return {
     input: input.inputPayload,
     output: input.outputPayload,
-    metadata: {
-      spec: input.specSlug,
-      version: input.version,
-      sourceSliceId: input.sourceSliceId,
-      datasetExampleId: input.datasetExampleId,
-    },
   } satisfies ExportedDatasetExampleRow;
 }
 

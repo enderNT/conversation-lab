@@ -51,7 +51,6 @@ export const DEFAULT_DATASET_SPECS: DatasetSpecDefinition[] = [
     },
     exportConfig: {
       format: "dspy_jsonl",
-      metadata: ["spec", "version", "sourceSliceId", "datasetExampleId"],
     },
     isActive: true,
     version: 1,

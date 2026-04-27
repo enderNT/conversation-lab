@@ -234,10 +234,6 @@ async function main() {
   });
 
   const exportedRow = toExportDatasetExample({
-    datasetExampleId: datasetExample.id,
-    sourceSliceId: sourceSlice.id,
-    specSlug: datasetSpec.slug,
-    version: datasetSpec.version,
     inputPayload: datasetExample.inputPayloadJson as never,
     outputPayload: datasetExample.outputPayloadJson as never,
   });

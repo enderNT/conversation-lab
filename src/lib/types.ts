@@ -417,10 +417,4 @@ export type DatasetImportSummary = {
 export type ExportedDatasetExampleRow = {
   input: JsonObject;
   output: JsonObject;
-  metadata: {
-    spec: string;
-    version: number;
-    sourceSliceId: string;
-    datasetExampleId: string;
-  };
 };

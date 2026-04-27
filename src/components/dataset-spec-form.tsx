@@ -62,8 +62,7 @@ const DEFAULT_VALIDATION_RULES = `{
 }`;
 
 const DEFAULT_EXPORT_CONFIG = `{
-  "format": "dspy_jsonl",
-  "metadata": ["spec", "version", "sourceSliceId"]
+  "format": "dspy_jsonl"
 }`;
 
 function SectionIcon({ children }: { children: React.ReactNode }) {
